@@ -12,7 +12,47 @@
 
 ---
 
-## 0.3 סיכום יומי - 30.7.2026 (יום חמישי) - CORS דינמי + RLS INSERT + גילוי פרצת RLS כבוי + פוליסי הזמנה שבורה
+## 0.4 סיכום יומי - 30.7.2026 (מפגש 1, אחה"צ) - תיקון Realtime לחדרי לייב + החלטות אסטרטגיות על הגעה לחנויות
+
+מפגש 1 לפי "תוכנית העבודה להשקה", שהתחיל בתיקון קוד קטן וממוקד והתפתח לדיון אסטרטגי חשוב על לוח הזמנים להשקה. **לא נגענו היום ב-DB/RLS בכלל** - כל השינוי היה בקוד frontend + תכנון.
+
+**מה נסגר בפועל, בקוד:**
+
+1. **תוקן הבאג: חדר לייב חדש לא הופיע אצל משתמשות אחרות בלי רענון ידני.** הסיבה: לא היה Realtime subscription כלל על טבלת `LiveRoom` (בניגוד ל-`RoomJoinRequest` ו-`DirectMessage` שכבר היו מחוברים). נוסף `useEffect` חדש ב-`src/main.jsx` עם ערוץ `'live-room-changes'` שמאזין ל-`postgres_changes` (`event: '*'`) על `LiveRoom`, ומעדכן את ה-state של `rooms` ישירות בלי לקרוא מחדש ל-`fetchRooms()`:
+   - `INSERT` → מוסיף את החדר החדש לתחילת הרשימה (עם בדיקת קיום, ליתר ביטחון מפני כפילות)
+   - `UPDATE` → מחליף את החדר המתאים בגרסה המעודכנת
+   - `DELETE` → מסנן את החדר שנמחק החוצה
+   - **אומת end-to-end בהצלחה:** שתי משתמשות מחוברות בו-זמנית (לא אנונימיות) - חדר חדש שנוצר אצל אחת הופיע מיידית אצל השנייה בלי שום רענון.
+
+2. **גילוי אגבי (לא באג) תוך כדי הבדיקה:** ניסיון ראשוני לבדוק עם חלון פרטי **אנונימי לגמרי** (בלי התחברות) הראה שהחדר לא מופיע כלל. זה **צפוי ותקין** - הפוליסי הכללית של `LiveRoom` ("authenticated read-all unless host deactivated") מוגדרת רק לתפקיד `authenticated`; אנונימית רואה חדר רק דרך הפוליסי השנייה (הזמנת אורח לא-ממומשת). לא תוקן דבר, כי זו התנהגות מכוונת קיימת - אבל זה פתח שאלת מוצר חדשה (ראו סעיף 10).
+
+**מה נבדק ויזואלית (לא קוד):**
+
+3. **סקירה כללית ראשונית של תצוגת המובייל** - הועברו שני צילומי מסך אמיתיים מטלפון (Chrome על אנדרואיד, גישה דרך ה-URL של הקודספייס). התצוגה הכללית של המסך הראשי (חדרי לייב + פיד הסקיצות זה-לצד-זה, לפי ה-`grid-cols-[150px_1fr]` הקיים) נראתה תקינה - לא זוהו בעיות דחופות. **הובהר לנגה, כשאלה טכנית נפרדת:** ה-URL bar וה-chrome של הדפדפן שנראים בצילומים ייעלמו לגמרי כשהאתר ייעטף כאפליקציה (Capacitor) - אבל הפרופורציות/לייאאוט של התוכן עצמו יישארו **זהות**, כי הם נקבעים לפי רוחב ה-viewport, לא לפי נוכחות ה-chrome. **הוחלט במפורש לדחות QA מפורט מסך-מסך** (טאצ' טארגטים, גלילה, מקלדת) לסבב הייעודי לפני ההשקה (שלב 5), ולא להתעכב עליו עכשיו.
+
+**החלטות אסטרטגיות גדולות שהתקבלו היום (לא קוד, אבל משפיעות מהותית על התוכנית):**
+
+4. **הוחלט במפורש: נוכחות בפועל ב-App Store וב-Google Play ביום ההשקה היא קריטית**, לא מספיק PWA/אתר רספונסיבי בלבד. זה שינה משמעותית את "תוכנית העבודה להשקה" (הקובץ עודכן במלואו - ראו גם בריפו/בקבצי הפרויקט אם הועלה שם).
+5. **נבדק בחיפוש בזמן אמת (30.7.2026) מצב הכלים הרלוונטי:**
+   - Capacitor עצמו (`npx cap init/add`) רץ לגמרי מתוך Codespaces, בלי מחשב נוסף.
+   - build סופי ל-iOS דורש macOS בפועל, אבל זה נפתר עם שירות build בענן ייעודי - **לא** מחשב Mac פיזי.
+   - **Capawesome Cloud** מומלץ כשירות build (נבנה במיוחד ל-Capacitor, ללא קונפיגורציית YAML מסובכת, tier חינמי + מ-9$/חודש). אלטרנטיבה: Codemagic. **לא** Ionic Appflow - יש לו תאריך שקיעה מוכרז (סוף 2027), לא מומלץ להתחיל עליו פרויקט חדש.
+   - Android אפשר לבנות גם ב-CI רגיל (GitHub Actions) בלי שום תלות ב-Mac בכלל.
+6. **חדשות טובות שעלו תוך כדי:** אפל דורשת אפשרות מחיקת חשבון בתוך האפליקציה עצמה (App Store Guideline 5.1.1(v)) - **וזה כבר בנוי ונבדק אצלנו** (ראו סעיף 0.3 בהיסטוריה - מחיקה/השהיית חשבון). חוסך זמן משמעותי מול פרויקט שמתחיל מאפס.
+7. **הוחלט על תזמון סופי (אחרי דיון ופשרה):**
+   - **פתיחת חשבונות המפתחים (Apple Developer Program + Google Play Developer) מתחילה עכשיו/השבוע** - זו עבודה מנהלתית טהורה (טופס + תשלום) שלא תלויה בשום שלב פיתוח, ולוקחת זמן המתנה פסיבי (24-48 שעות, לפעמים יותר) שלא כדאי לדחוס לשבוע האחרון.
+   - **כל שאר עבודת החנויות** (Capacitor בפועל, טיוטת מדיניות פרטיות/תנאי שימוש, build, איסוף חומרי חנות, הגשה ל-Review) **נדחית במכוון לשבוע שלפני ההשקה בפועל** - כשהאפליקציה כבר תהיה שלמה (וידאו עובד, צ'אט עובד, פרופילים מוכנים), כדי לא להגיש build חצי-גמור. נגה בחרה במפורש באפשרות הזו על פני התחלה מוקדמת יותר, למרות שסומן לה הסיכון שבזה (זמן ה-Review של אפל הוא הגורם הכי פחות ודאי בתוכנית, ושבוע הוא חלון צר יחסית לספוג דחייה+תיקון). **סיכון פתוח ומודע**, לא נפתר - רק סומן.
+   - נרשמה רשת ביטחון: אם קורה עיכוב באותו שבוע אחרון, PWA יכול לשמש כפתרון גישור זמני (לא קבוע).
+
+**קובץ שעודכן היום (לא בריפו של הקוד, קובץ תכנון בלבד):** `תוכנית_עבודה_להשקה.md` - עודכן פעמיים במהלך המפגש לשקף את כל השינויים למעלה. אם הקובץ מועלה כקובץ פרויקט ב-Claude, **חשוב להחליף אותו בגרסה החדשה** - קבצי פרויקט הם עותק קבוע (snapshot) ולא מתעדכנים אוטומטית.
+
+**במפורש נדחה להיום, לפי בקשת נגה (לא מחוסר זמן, אלא מבחירה):**
+- דיון על Jitsi (שלב 2 בתוכנית) - נדחה כולו ליום ראשון, כנושא גדול שמצדיק מפגש מלא משלו.
+- שלוש משימות אבטחה קטנות שהוצעו כברירת מחדל למפגש (בדיקת end-to-end ל-INSERT policy של deactivated_at, סקירה שיטתית של policies נוספים, ניקוי ה-Secret הישן) - **לא בוצעו היום**, עדיין ב-TODO לסשן הבא.
+
+---
+
+## 0.3 סיכום יומי - 30.7.2026 (יום חמישי, בוקר) - CORS דינמי + RLS INSERT + גילוי פרצת RLS כבוי + פוליסי הזמנה שבורה
 
 יום עבודה שהתחיל כהמשך ישיר ומתוכנן לשני ה-TODO-ים שעלו מביקורת Gemini על סיכום ה-28.7 (סעיף 0.2), אבל הפך לגילוי **פרצת אבטחה חמורה ובלתי-קשורה** דרך בדיקת end-to-end של פיצ'ר ההשהיה. הסדר בפועל:
 
@@ -122,6 +162,7 @@ ORDER BY relname;
 * **הודעות אישיות (DM):** קיימות כפיצ'ר מלא - שיחה 1:1, תיבת דואר נכנס, ארכיון לפי צד. עדיין אין push notifications/מייל על הודעה חדשה. מוגנות RLS + טריגר הקשחה ברמת עמודה, ומאנונמות (לא נמחקות) בעת מחיקת חשבון של אחד הצדדים. מ-30.7 מוגנות גם ב-INSERT מפני שליחה ע"י משתמשת מושהית.
 * **חשבון: שני מסלולים נפרדים** - השהיה (הפיכה, ללא הגבלת זמן, דרך התפריט) ומחיקה לצמיתות (בלתי הפיכה, דורשת הקלדת אישור). ראו סעיף 0 לפרטים המלאים. **נבדק end-to-end בהצלחה ב-30.7 (השהיה בלבד - מחיקה עדיין לא נבדקה בפועל).**
 * **תוכנית עתידית (לא בסשן קרוב):** הצפנה מקצה-לקצה ל-DM ואולי לחדרי לייב - דורשת סשן תכנון נפרד.
+* **החלטה אסטרטגית חדשה (30.7 אחה"צ):** האפליקציה חייבת להיות בפועל ב-App Store וב-Google Play ביום ההשקה, לא רק PWA. ייעטף עם Capacitor + build בענן (Capawesome Cloud). ראו סעיף 0.4 לפרטים המלאים, ו"תוכנית עבודה להשקה.md" לתזמון המדויק.
 
 ## 2. סביבת הפיתוח
 
@@ -129,7 +170,7 @@ ORDER BY relname;
 * בסיס נתונים + Auth + Storage + Edge Functions: **Supabase** (Project ref: `djygajgvpzdqddexyrgn`, region eu-central)
 * **תוכנית Free - אין גיבויים אוטומטיים.** הוחלט ב-26.7 שזה בסדר כרגע כי אין עדיין משתמשים/דאטה אמיתיים - להעריך מחדש לפני השקה בפועל.
 * Base44: שימש רק לעיצוב ראשוני - לא חלק מסביבת הפיתוח בפועל.
-* וידאו/שמע אמיתי בחדרי לייב: **לא קיים** - כרגע רק Presence + כרטיסיות עיצוביות.
+* וידאו/שמע אמיתי בחדרי לייב: **לא קיים** - כרגע רק Presence + כרטיסיות עיצוביות. **מתוכנן ל-Jitsi (`meet.jit.si`), נדחה ליום ראשון 2.8.2026 כמפגש ייעודי.**
 * Stack טכני: React + Vite, Tailwind CSS, `@supabase/supabase-js`
 * Supabase CLI: `npm install supabase --save-dev`, מופעל דרך `npx supabase ...`. **הטוקן פג תוקף מדי פעם** - להריץ `npx supabase login` **רק כשבפועל מריצים פקודת CLI ומקבלים שגיאת הרשאה** (לא חובה בתחילת כל יום סתם - הובהר ב-30.7).
 * **כלל ברזל להעתקת קוד/SQL בין הצ'אט לעורך:** תמיד כפתור ה-Copy שבפינת תיבת הקוד, אף פעם לא סימון ידני.
@@ -145,17 +186,18 @@ ORDER BY relname;
   ```
   `relrowsecurity` חייב להיות `true` - אחרת כל ה-policies המוגדרות על הטבלה מתעלמות לחלוטין, בלי שום שגיאה או אזהרה. מומלץ להריץ את הבדיקה הזו על כל הטבלאות כצעד ראשון בכל סשן אבטחה עתידי.
 * **טיפ נוסף מ-30.7: policy שבודקת "האם קיימת שורה קשורה כלשהי" (EXISTS גנרי) עלולה להיות רחבה מדי.** יש לוודא שהבדיקה כוללת גם תנאי רלוונטיות בזמן אמת (כמו `used = false`, לא רק "אי-פעם נוצר"), אחרת גישה חד-פעמית הופכת לחשיפה קבועה.
-* **טיפ לבדיקת תרחישי "משתמש אחר":** תמיד לוודא דרך Supabase Dashboard → Authentication → Users → "Last sign in at" שבאמת התחלפת בין חשבונות. שימוש בחלונות Incognito נפרדים (לא רק טאבים) מומלץ - **וגם**, כפי שאומת ב-30.7, חלון פרטי לגמרי בלי שום התחברות הוא הבדיקה הכי אמינה לחשיפה כלפי "זר גמור".
+* **טיפ לבדיקת תרחישי "משתמש אחר":** תמיד לוודא דרך Supabase Dashboard → Authentication → Users → "Last sign in at" שבאמת התחלפת בין חשבונות. שימוש בחלונות Incognito נפרדים (לא רק טאבים) מומלץ - **וגם**, כפי שאומת ב-30.7, חלון פרטי לגמרי בלי שום התחברות הוא הבדיקה הכי אמינה לחשיפה כלפי "זר גמור" - אבל **שים לב**: חלון פרטי אנונימי גם לא רואה חדרי לייב כלל (זו התנהגות מכוונת, לא באג - ראו סעיף 0.4). לבדיקת Realtime בין משתמשות, חובה שהחלון השני יהיה **מחובר** (לא רק פרטי), אחרת התוצאה מטעה.
 * **Edge Functions - CORS (עודכן 30.7):** שתי הפונקציות (`extract-pdf-text`, `delete-account`) בודקות כעת את ה-`Origin` header של הבקשה הנכנסת מול regex קבוע בקוד (`/^https:\/\/[a-z0-9-]+\.app\.github\.dev$/`) ומחזירות אותו בדיוק אם תואם. **אין יותר תלות ב-Secret `ALLOWED_ORIGIN`** - השינוי בקוד בלבד, בלי redeploy נדרש בכל שינוי פורט. ה-Secret הישן עדיין קיים בפרויקט אך לא נקרא (ניקוי קוסמטי אופציונלי, לא דחוף).
 * **הבדלה בין שתי Edge Functions בשם קובץ זהה (index.ts):** שם הקובץ תמיד `index.ts` (דרישת Supabase) - ההבדל הוא **שם התיקייה** (`supabase/functions/extract-pdf-text/` מול `supabase/functions/delete-account/`, שתי תיקיות אחיות עצמאיות, לא מקוננות זו בזו), לא שם הקובץ. לזיהוי איזה תוכן שייך לאיזו פונקציה: extract-pdf-text מכיל `pdf-parse`/`word-extractor`; delete-account מכיל `ownSketchesResult`/`auth.admin.deleteUser`.
+* **חדש מ-30.7 - הגעה לחנויות בלי מחשב מקומי:** Capacitor (`npx cap init/add`) רץ לגמרי מתוך Codespaces. ה-build הסופי ל-iOS דורש macOS, נפתר עם שירות build בענן ייעודי (Capawesome Cloud מומלץ, לא Ionic Appflow - יש לו תאריך שקיעה מוכרז לסוף 2027). Android אפשר לבנות גם ב-GitHub Actions בלי תלות ב-Mac כלל. **טרם הותקן בקוד בפועל - מתוכנן לשבוע שלפני ההשקה, ראו "תוכנית עבודה להשקה.md".**
 
 ## 3. מבנה הפרויקט (קבצים עיקריים)
 
 ```
 src/
-  main.jsx                       # עודכן 28.7 - state/handlers לניהול חשבון
+  main.jsx                       # עודכן 30.7 (אחה"צ) - נוסף useEffect לערוץ Realtime 'live-room-changes' על LiveRoom (INSERT/UPDATE/DELETE); עודכן גם 28.7 - state/handlers לניהול חשבון
   App.jsx                        # עודכן 28.7 - מסך חסימה להשהיה + תפריט פרופיל
-  RoomPage.jsx
+  RoomPage.jsx                   # טרם עודכן - מיועד לחיבור Jitsi ביום ראשון 2.8.2026
   index.css
   lib/
     supabaseClient.js
@@ -216,12 +258,16 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 - מחיקת חשבון: כפתור בתפריט → מודל דורש הקלדת "מחק לצמיתות" → הכפתור נדלק רק בהקלדה מדויקת (נבדק ויזואלית). **end-to-end בפועל עדיין לא נבדק (ראו TODO).**
 - CORS מהודק על שתי ה-Edge Functions (הוחלף לגמרי ב-30.7 בגרסה הדינמית).
 
-**חדש ונבדק ב-30.7:**
+**מ-30.7 (בוקר):**
 - **השהיית חשבון - נבדק end-to-end בהצלחה:** הפעלה → מסך חסימה מיידי, כולל אחרי logout+login מלא (לא רק ריענון) → ביטול השהיה → חזרה לפעילות. `deactivated_at` מאומת כמוזרם נכון מ-`main.jsx` ל-`App.jsx` בדפדפן בפועל.
 - **RLS על `Profile`/`Sketch`/`SketchFeedback` - תוקן ואומת שהוא פעיל בפועל** (לא רק ש-policies קיימות - `relrowsecurity=true` נבדק ישירות).
 - **פוליסי `LiveRoom`/`RoomInvite` - תוקנה ואומתה:** חדר עם הזמנות ממומשות בלבד כבר לא גלוי לציבור; חדר עם הזמנה לא-ממומשת עדיין גלוי (פער ידוע ומקובל).
 - CORS דינמי לפי Origin - שתי הפונקציות נפרסו ואומתו כעובדות (בדיקת extract-pdf-text עקיפה דרך העלאת מסמך בהצלחה בעבר, delete-account טרם נבדקה end-to-end בפועל).
-- RLS: הוספת `deactivated_at IS NULL` ל-INSERT של `Sketch` ו-`DirectMessage` - הורץ בהצלחה, טרם נבדק end-to-end בפועל (למשל: לנסות בפועל להעלות סקיצה/לשלוח DM מחשבון מושהה ולוודא חסימה).
+- RLS: הוספת `deactivated_at IS NULL` ל-INSERT של `Sketch` ו-`DirectMessage` - הורץ בהצלחה, טרם נבדק end-to-end בפועל.
+
+**חדש ונבדק ב-30.7 (אחה"צ, מפגש 1):**
+- **Realtime subscription ל-`LiveRoom` - נוסף ואומת end-to-end.** חדר חדש שנוצר אצל משתמשת מחוברת אחת מופיע מיידית אצל משתמשת מחוברת אחרת, בלי רענון. (אומת גם: משתמשת אנונימית לגמרי לא רואה חדרים כלל - זו התנהגות RLS מכוונת וקיימת, לא קשורה לתיקון הזה.)
+- **תצוגת מובייל - סקירה כללית ראשונית אושרה תקינה** מצילומי מסך אמיתיים (פיד+חדרים זה-לצד-זה). QA מפורט נדחה במכוון לשלב 5 בתוכנית העבודה.
 
 ## 8. מה בתהליך / שבור / לא גמור
 
@@ -230,17 +276,24 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 **נותר מ-26.7, טרם טופל:**
 - קטעי WAV לא מתנגנים בדפדפן (MP3 עובד) - שגיאת קודק, לא אבטחתי.
 - העלאת קובץ אודיו איטית - לא אובחן.
-- חדר חדש לא מופיע בלי רענון ידני - חסר Realtime subscription ל-LiveRoom.
+- ~~חדר חדש לא מופיע בלי רענון ידני - חסר Realtime subscription ל-LiveRoom~~ **✅ תוקן ואומת 30.7 (אחה"צ) - ראו סעיף 0.4.**
 - אין גיבוי אוטומטי (Free plan) - מקובל זמנית.
 
-**TODO מיידי לסשן הבא (מעודכן 30.7):**
-- **חדש, בעדיפות גבוהה:** לבצע סקירה שיטתית של **כל** ה-policies בכל הטבלאות, מחפשים במיוחד תבנית "EXISTS גנרי בלי בדיקת רלוונטיות בזמן אמת" כמו זו שנמצאה ב-`RoomInvite`/`LiveRoom` היום - לא ידוע אם יש עוד policies דומות שלא אותרו.
-- **חדש:** בדיקת end-to-end בפועל: לנסות להעלות סקיצה / לשלוח DM מחשבון מושהה בפועל ולוודא שה-INSERT policy החדשה (מ-30.7) אכן חוסמת.
-- בדיקת end-to-end בפועל: יצירת משתמש בדיקה, מחיקה לצמיתות, ואימות שהכל נמחק/מאונונם נכון בטבלאות + ב-Storage + ב-auth.users. **עדיין נדחה - חסר כתובת מייל פנויה לוויתור.** אפשרויות שהוצעו: טריק Gmail עם `+`, או שירות מייל זמני לבדיקת פיתוח בלבד.
-- ניקוי קוסמטי: מחיקת ה-Secret הישן `ALLOWED_ORIGIN` (`npx supabase secrets unset ALLOWED_ORIGIN`) - לא דחוף, כבר לא בשימוש.
+**TODO מיידי לסשן הבא (מעודכן 30.7 אחה"צ - שלוש הפריטים הראשונים הוצעו למפגש הזה ונדחו במפורש לפי בקשת נגה):**
+- לבצע סקירה שיטתית של **כל** ה-policies בכל הטבלאות, מחפשים במיוחד תבנית "EXISTS גנרי בלי בדיקת רלוונטיות בזמן אמת" כמו זו שנמצאה ב-`RoomInvite`/`LiveRoom` היום - לא ידוע אם יש עוד policies דומות שלא אותרו. **טרם בוצע.**
+- בדיקת end-to-end בפועל: לנסות להעלות סקיצה / לשלוח DM מחשבון מושהה בפועל ולוודא שה-INSERT policy החדשה (מ-30.7 בוקר) אכן חוסמת. **טרם בוצע.**
+- ניקוי קוסמטי: מחיקת ה-Secret הישן `ALLOWED_ORIGIN` (`npx supabase secrets unset ALLOWED_ORIGIN`) - לא דחוף, כבר לא בשימוש. **טרם בוצע.**
+- בדיקת end-to-end בפועל: יצירת משתמש בדיקה, מחיקה לצמיתות, ואימות שהכל נמחק/מאונונם נכון בטבלאות + ב-Storage + ב-auth.users. **עדיין נדחה - חסר כתובת מייל פנויה לוויתור.**
 - לוודא ש-Storage policies לא מסתמכות בעקיפין על מצב תקין של RLS בטבלת Sketch (ראו הערה בסעיף 5) - לא נבדק היום.
 
-**סגור לגמרי (הוסר מרשימת TODO ב-30.7):**
+**חדש - מוצר, לא קוד (מ-30.7 אחה"צ):**
+- לפתוח חשבון Apple Developer Program - **מומלץ להתחיל השבוע**, לא קשור לקוד, ראו סעיף 0.4/1.
+- לפתוח חשבון Google Play Developer - **מומלץ להתחיל השבוע**.
+
+**סגור לגמרי (הוסר מרשימת TODO ב-30.7 אחה"צ):**
+- באג Realtime ב-LiveRoom - תוקן ואומת.
+
+**סגור לגמרי (הוסר מרשימת TODO ב-30.7 בוקר):**
 - CORS דינמי (regex לפי Origin) בשתי ה-Edge Functions - הושלם ונפרס.
 - RLS: `deactivated_at IS NULL` ב-INSERT של Sketch ו-DirectMessage - הושלם (בדיקת end-to-end בפועל עדיין TODO, ראו למעלה).
 - בדיקת end-to-end של השהיית חשבון (מסך חסימה + logout/login + ביטול) - הושלם במלואו.
@@ -262,10 +315,15 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 - **זיוף MIME type ברמת ה-API לא ייסגר בקרוב הקרוב** - סיכון מקובל במודע, ראו סעיף 5.
 - הצפנה מקצה-לקצה (E2E) - עדיין נושא נפרד, סשן תכנון ייעודי.
 
-**מ-30.7:**
+**מ-30.7 (בוקר):**
 - **CORS על Edge Functions דרך בדיקת Origin+regex דינמית**, לא דרך Secret קבוע (`ALLOWED_ORIGIN`) - מבטל את הצורך בעדכון ידני בכל שינוי פורט. זו שדרוג של ההחלטה הקודמת מ-28.7, לא סתירה לה.
 - **חדר עם הזמנת-אורח נשאר גלוי לציבור רק כל עוד יש לו הזמנה שטרם מומשה (`used=false`)** - לא "כל עוד אי-פעם הייתה לו הזמנה". זו הבהרה/תיקון של ההחלטה מ-26.7, לא שינוי כיוון.
 - **בדיקת `relrowsecurity` בפועל (לא רק תוכן ה-policies) הופכת לצעד קבוע וחובה בתחילת כל סשן אבטחה עתידי.**
+
+**מ-30.7 (אחה"צ):**
+- **נוכחות בפועל ב-App Store/Google Play ביום ההשקה היא קריטית**, לא רק PWA. Capacitor + build בענן (Capawesome Cloud מומלץ).
+- **תזמון**: פתיחת חשבונות המפתחים מתחילה עכשיו/השבוע (עבודה מנהלתית, לא תלויה בקוד). כל שאר עבודת החנויות (Capacitor בפועל, build, הגשה) נדחית במכוון לשבוע שלפני ההשקה, אחרי שהאפליקציה שלמה - החלטה מודעת של נגה, למרות הסיכון שסומן (זמן Review לא ודאי, שבוע הוא חלון צר).
+- **דיון Jitsi (שלב 2 בתוכנית) נדחה כולו ליום ראשון 2.8.2026** כמפגש ייעודי - נושא גדול מדי לסוף מפגש 1.
 
 ## 10. שאלות/החלטות פתוחות לשיחה הבאה
 
@@ -275,16 +333,20 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 - מתי לגשת להבדלי חדרי הלייב (Stage מול Peer-to-Peer, תור מובנה)?
 - מתי לגשת לכלי הפידבק המתקדמים (Waveform annotation, Rubric)?
 - מתי לגשת למונטיזציה?
-- מתי לגשת לווידאו/מיקרופון אמיתי ולצ'אט החי בחדר?
 - הודעות אישיות: push/מייל על הודעה חדשה? ארכוב שיחה שלמה בלחיצה אחת?
 
 **מ-28.7 (עדיין רלוונטיות):**
 - אם בעתיד ירצו לכסות גם את התרחיש השולי של הזמנת אורח לחדר של מארחת שהשהתה חשבון תוך כדי (כרגע לא מטופל בכוונה - שים לב: זה עדיין נכון גם אחרי תיקון ה-`used=false` מ-30.7, כי חדר עם הזמנה לא-ממומשת של מארחת מושהית עדיין גלוי במכוון).
 - להחליט אם/מתי בכל זאת להשקיע בשכבת בדיקת magic-bytes לקבצים (כרגע דחוי במודע).
 
-**חדש מ-30.7:**
+**מ-30.7 (בוקר):**
 - לתאם מולי (נגה) מתי לבצע את בדיקת המחיקה הסופית (דורשת כתובת מייל שאפשר לוותר עליה).
 - להחליט אם להקדיש סשן מלא לסקירה שיטתית של כל שאר ה-policies בכל הטבלאות (לאור שתי הפרצות שנמצאו היום, לא ברור שאין עוד).
+
+**חדש מ-30.7 (אחה"צ):**
+- **שאלת מוצר פתוחה, נדחתה במכוון:** האם מבקרת אנונימית לגמרי (בלי התחברות) אמורה לראות את רשימת חדרי הלייב הפעילים (בלי יכולת הצטרפות, רק לראות שהם קיימים), או שזה בכוונה מוסתר עד שהיא מתחברת?
+- **סיכון פתוח, לא נפתר:** תזמון הגשת החנויות (שבוע לפני השקה בלבד) חושף את התוכנית לזמן Review לא-ודאי של אפל. אם יש סימן לעיכוב באותו שבוע, זה הדבר הראשון שצריך להעלות - האופציה היחידה אז היא PWA כפתרון גישור זמני.
+- לוודא שהקובץ המעודכן `תוכנית_עבודה_להשקה.md` (עם המסלול המקביל של החנויות) מוחלף בקבצי הפרויקט אם הוא מועלה שם - קבצי פרויקט הם snapshot קבוע ולא מתעדכנים אוטומטית.
 
 ---
 
@@ -292,54 +354,49 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 
 ```json
 {
-  "last_updated": "2026-07-28",
-  "session_focus": "closing all remaining security gaps + account deletion + account deactivation",
-  "files_changed_today": [
+  "last_updated": "2026-07-30-afternoon",
+  "session_focus": "fixed LiveRoom realtime subscription bug; strategic decision on app store presence and timing",
+  "files_changed_today_afternoon": [
+    {
+      "path": "src/main.jsx",
+      "change": "Added new useEffect creating a Supabase Realtime channel 'live-room-changes' subscribed to postgres_changes (event: '*') on table LiveRoom. Handles INSERT (prepend to rooms state, with existence check to avoid duplicates), UPDATE (replace matching room), DELETE (filter out removed room). No longer relies on manual fetchRooms() re-calls to see other users' new rooms.",
+      "status": "delivered as full file, pasted, confirmed working end-to-end with two logged-in users in separate browser sessions (new room appeared instantly on the second user's screen without refresh)."
+    }
+  ],
+  "files_changed_today_morning": [
     {
       "path": "supabase/functions/extract-pdf-text/index.ts",
-      "change": "Added manual JWT verification (supabase.auth.getUser) before any file processing. Tightened CORS to read ALLOWED_ORIGIN from env instead of wildcard.",
-      "status": "delivered, deployed, confirmed working (document upload still works when authenticated)"
+      "change": "CORS switched from ALLOWED_ORIGIN secret to dynamic Origin-header check against regex /^https:\\/\\/[a-z0-9-]+\\.app\\.github\\.dev$/",
+      "status": "deployed, confirmed"
     },
     {
       "path": "supabase/functions/delete-account/index.ts",
-      "change": "New function. Verifies JWT, collects Storage file paths (own sketches + feedback under them), deletes those files, calls delete_account_data RPC, deletes the user via auth.admin.deleteUser. CORS tightened via ALLOWED_ORIGIN.",
-      "status": "delivered, deployed. End-to-end test with a real test account still pending."
-    },
-    {
-      "path": "src/App.jsx",
-      "change": "Added DeactivatedAccountScreen (blocks entire app UI when profile.deactivated_at is set, offers reactivation). Added two menu items directly in profile dropdown: 'מחיקת חשבון לצמיתות' (opens modal via onOpenDeleteAccount) and 'השהיית חשבון' (direct action via onDeactivateAccount, with window.confirm).",
-      "status": "delivered as full file, pasted, confirmed menu renders correctly. Full end-to-end (deactivate -> block screen -> reactivate) not yet tested."
-    },
-    {
-      "path": "src/main.jsx",
-      "change": "Added isDeleteAccountModalOpen state, handleOpenDeleteAccount, handleDeactivateAccount (direct supabase update to Profile.deactivated_at). Renders DeleteAccountConfirmModal instead of old combined AccountManagementModal. Passes onOpenDeleteAccount/onDeactivateAccount to App.",
-      "status": "delivered as full file, pasted, confirmed working"
-    },
-    {
-      "path": "src/components/DeleteAccountConfirmModal.jsx",
-      "change": "New file, replacing the short-lived AccountManagementModal.jsx. Only handles permanent deletion: requires typing exact confirmation phrase before enabling delete button, calls supabase.functions.invoke('delete-account'), then signs out and reloads.",
-      "status": "delivered, confirmed rendering (button lights up correctly on exact match)"
-    },
-    {
-      "path": "src/components/EditProfileModal.jsx",
-      "change": "Reverted to original content - account management logic was tried here first, then moved out entirely per user feedback (should live in profile menu, not inside edit-details modal).",
-      "status": "reverted to pre-session-start content, confirmed"
+      "change": "Same dynamic CORS change as extract-pdf-text. Also fixed folder/file location - was miscreated nested inside extract-pdf-text/ with wrong filename Index.TS, moved to correct sibling path supabase/functions/delete-account/index.ts",
+      "status": "deployed, confirmed"
     }
   ],
-  "files_deleted_today": [
-    { "path": "src/components/AccountManagementModal.jsx", "reason": "superseded - split into direct menu actions + DeleteAccountConfirmModal.jsx per user preference" }
+  "sql_run_today_morning": [
+    { "purpose": "Added deactivated_at IS NULL check to Sketch INSERT policy (WITH CHECK)", "target": "Sketch policy 'Users can insert their own sketches'", "status": "confirmed, end-to-end test still pending" },
+    { "purpose": "Added deactivated_at IS NULL check to DirectMessage INSERT policy (WITH CHECK)", "target": "DirectMessage policy 'Users can send messages as themselves'", "status": "confirmed, end-to-end test still pending" },
+    { "purpose": "Re-enabled RLS at the table level (was fully disabled, relrowsecurity=false)", "target": "Profile, Sketch, SketchFeedback", "status": "confirmed, verified relrowsecurity=true on all 10 tables" },
+    { "purpose": "Tightened LiveRoom/RoomInvite guest-visibility policy to require used=false, not just 'invite exists'", "target": "LiveRoom policy 'Rooms are viewable via valid invite'", "status": "confirmed, verified in private window" }
   ],
-  "sql_run_today": [
-    { "purpose": "50MB file size limit at bucket level", "target": "storage.buckets.sketch-files.file_size_limit", "status": "confirmed" },
-    { "purpose": "Full allowed MIME types whitelist at bucket level (audio/video/document formats)", "target": "storage.buckets.sketch-files.allowed_mime_types", "status": "confirmed" },
-    { "purpose": "RoomInvite UPDATE policy restricted to used:false->true only", "target": "RoomInvite policy", "status": "confirmed" },
-    { "purpose": "delete_account_data(uuid) SECURITY DEFINER function - deletes own content, anonymizes dependent content, execute granted to service_role only", "target": "public.delete_account_data", "status": "confirmed" },
-    { "purpose": "Profile.deactivated_at column added", "target": "Profile table", "status": "confirmed" },
-    { "purpose": "Profile SELECT policy updated to hide deactivated accounts from others", "target": "'Profiles are viewable by authenticated users'", "status": "confirmed" },
-    { "purpose": "Sketch SELECT policy updated to hide sketches of deactivated uploaders from others", "target": "'Sketches are viewable if public or owned'", "status": "confirmed" },
-    { "purpose": "ProfessionalProfile SELECT policy updated to hide deactivated accounts from others (gap found during same-session review)", "target": "'Professional profiles are viewable by authenticated users'", "status": "confirmed" },
-    { "purpose": "LiveRoom general SELECT policy updated to hide rooms of deactivated hosts from others (invite-based policy intentionally left untouched)", "target": "'Rooms are viewable by authenticated users'", "status": "confirmed" }
-  ],
+  "no_sql_or_db_changes_today_afternoon": true,
+  "product_decisions_today_afternoon": {
+    "app_store_presence": "decided critical, not optional - must be live on App Store and Google Play by launch day, not just a responsive PWA",
+    "wrapping_technology": "Capacitor (wraps existing React code, no rewrite) + cloud build service for iOS binary (Capawesome Cloud recommended over Codemagic; explicitly NOT Ionic Appflow due to its announced sunset end of 2027)",
+    "android_build": "can be done via GitHub Actions with no Mac dependency at all",
+    "apple_deletion_requirement": "Apple Guideline 5.1.1(v) requires in-app account deletion - already built and tested (2026-07-28/30), saves time",
+    "timing_decision_after_discussion": "Developer account signups (Apple Developer Program + Google Play Developer) start now/this week - pure administrative work, not code-dependent, and has passive waiting time (24-48h+) not worth compressing into the final week. ALL other store-related work (Capacitor implementation, privacy policy draft, cloud build setup, store asset collection, actual Review submission) deliberately deferred to the week immediately before launch, once the app is feature-complete (video, chat, profiles all working) - Noga's explicit choice after being shown the risk (Apple review time is the least certain factor in the whole plan, one week is a narrow window to absorb a rejection+fix cycle). Risk flagged, not resolved - PWA noted as a temporary bridge option if that week slips.",
+    "jitsi_deferred": "Step 2 (Jitsi video/audio) explicitly deferred in full to a dedicated session on Sunday 2026-08-02 - too large a topic for the end of session 1",
+    "three_small_security_todos_declined_today": "End-to-end test of deactivated_at INSERT check, systematic policy review for other generic-EXISTS patterns, and ALLOWED_ORIGIN secret cleanup were all offered as small same-session tasks and explicitly declined by Noga for today - still open TODOs for next session"
+  },
+  "mobile_review_today": {
+    "method": "two real phone screenshots (Chrome on Android, via Codespaces URL) reviewed visually",
+    "finding": "general layout (side-by-side rooms+feed grid) looked fine, no urgent issues flagged",
+    "clarified_to_noga": "browser chrome (URL bar, menu) will disappear once wrapped as an app via Capacitor, but content proportions/layout stay identical because they're determined by viewport width, not chrome presence",
+    "detailed_screen_by_screen_QA": "explicitly deferred to stage 5 (pre-launch QA pass), not done today"
+  },
   "rls_status": {
     "Profile": { "enabled": true, "policies": ["select: authenticated read-all UNLESS deactivated_at IS NOT NULL (then only owner) - updated 2026-07-28", "insert: own id only", "update: own id only"] },
     "ProfessionalProfile": { "enabled": true, "policies": ["select: authenticated read-all UNLESS linked Profile is deactivated (then only owner) - updated 2026-07-28", "insert/update/delete: own id only"] },
@@ -374,13 +431,14 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
       "login_still_works": true,
       "reactivation_mechanism": "reuses existing Magic Link login itself as the identity-verification step; app then shows a dedicated block screen with a reactivate button that clears deactivated_at",
       "known_limitation": "enforcement is UI-layer + RLS-for-others only; the deactivated user's own API calls to their own rows are not blocked at the RLS layer, since they still hold a valid, non-banned JWT. Impact limited to the user themselves, not third parties (partially addressed 2026-07-30 for Sketch/DirectMessage INSERT specifically).",
-      "end_to_end_test_status": "PASSED 2026-07-30: block screen appears correctly, persists across full logout+login (not just refresh), reactivation restores full access. deactivated_at confirmed propagating correctly from main.jsx to App.jsx in live browser."
+      "end_to_end_test_status": "PASSED 2026-07-30 morning: block screen appears correctly, persists across full logout+login (not just refresh), reactivation restores full access. deactivated_at confirmed propagating correctly from main.jsx to App.jsx in live browser."
     },
     "permanent_deletion": {
       "reversible": false,
       "requires_typed_confirmation": "מחק לצמיתות",
       "legal_basis": "anonymization of dependent third-party content + full deletion of exclusively-owned content satisfies erasure requirement under privacy law (equivalent to GDPR Article 17 approach), without breaking other users' threads/conversations",
-      "end_to_end_test_status": "NOT YET TESTED as of 2026-07-30 - deferred, no disposable email address available. Gmail '+' trick or temporary email service suggested for future test."
+      "end_to_end_test_status": "NOT YET TESTED as of 2026-07-30 - deferred, no disposable email address available. Gmail '+' trick or temporary email service suggested for future test.",
+      "note_2026_07_30_afternoon": "this feature happens to satisfy Apple App Store Guideline 5.1.1(v) which requires in-app account deletion - relevant now that store submission is planned"
     }
   },
   "security_incident_2026_07_30": {
@@ -390,12 +448,38 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
     "secondary_finding": "LiveRoom's guest-invite SELECT policy ('Rooms are viewable via valid invite') only checked whether a RoomInvite row existed for the room at all, not whether it was still unused - meaning any room that ever had an invite link generated remained publicly visible forever, even long after the guest had already joined. Fixed by adding 'AND RoomInvite.used = false' to the EXISTS check. Verified: a room with only used invites disappeared from public view; a room with a genuinely deactivated host + an unused invite remained visible (this second case is the pre-existing, deliberately-accepted edge case from 2026-07-26, not a new gap).",
     "methodological_lesson": "Checking pg_policies content (the qual expression) is not sufficient on its own - must also verify pg_class.relrowsecurity is true at the table level, and must check EXISTS-based policies for real-time relevance conditions (not just 'a related row was ever created'). Recommended as a standard first step in all future security sessions."
   },
+  "live_room_realtime_fix_2026_07_30_afternoon": {
+    "bug": "New LiveRoom created by one user did not appear for other users without a manual page refresh - no Realtime subscription existed on the LiveRoom table (unlike RoomJoinRequest and DirectMessage which already had channels).",
+    "fix": "Added a new Supabase Realtime channel 'live-room-changes' in src/main.jsx, subscribed to postgres_changes on LiveRoom for all event types, updating local rooms state directly on INSERT/UPDATE/DELETE instead of re-fetching.",
+    "test_result": "PASSED - verified with two separate logged-in users (not anonymous) in separate browser sessions; new room appeared instantly for the second user without any refresh.",
+    "related_non_bug_finding": "An anonymous (fully logged-out) visitor does NOT see any rooms at all, by design - the general LiveRoom SELECT policy is restricted to the 'authenticated' role; anonymous visitors only see rooms via the separate unused-invite policy. This is expected RLS behavior, not related to the Realtime fix, and opened a new deferred product question (see open_questions)."
+  },
+  "app_store_strategy_2026_07_30_afternoon": {
+    "decision": "Must be live on App Store and Google Play by launch day - not optional, not satisfied by PWA alone",
+    "wrapping_approach": "Capacitor wraps the existing React codebase (no rewrite) - npx cap init/add ios/add android run fine from within Codespaces with no local machine needed",
+    "ios_build_constraint": "Actual iOS binary build requires macOS, solved via a cloud build service (NOT a physical Mac)",
+    "recommended_cloud_build_service": "Capawesome Cloud - purpose-built for Capacitor, no complex YAML config, free tier + paid plans from $9/month",
+    "alternative_cloud_build_service": "Codemagic - free tier up to 500 macOS build minutes/month",
+    "explicitly_not_recommended": "Ionic Appflow - has an announced sunset date (end of 2027), not worth starting a new project on",
+    "android_build": "can be fully handled via GitHub Actions with zero Mac dependency",
+    "apple_requirement_already_satisfied": "App Store Guideline 5.1.1(v) requires in-app account deletion capability - already built and tested in this project (see account_lifecycle_design.permanent_deletion)",
+    "timing_final_decision": {
+      "developer_account_signups": "start now/this week (Apple Developer Program + Google Play Developer) - pure administrative work, not code-dependent, has passive approval wait time (24-48h+) best not compressed into final week",
+      "everything_else": "deliberately deferred to the week immediately before actual launch (Capacitor implementation, privacy policy/terms of service draft, cloud build setup, store asset collection, actual Review submission) - Noga's explicit choice, made after being shown the risk that Apple's review time is the least certain factor in the whole plan and one week is a narrow window to absorb a rejection+fix cycle. Risk flagged and accepted, not resolved.",
+      "bridge_fallback": "if that final week slips, a PWA (installable from browser, 'add to home screen') is noted as a temporary bridge option, not a permanent substitute"
+    }
+  },
   "pending_verification": [
     "end-to-end test of permanent deletion with a disposable test account (verify Storage files gone, DB rows deleted/anonymized correctly, auth.users entry gone, login impossible afterward) - still deferred as of 2026-07-30, no disposable email available",
-    "end-to-end test of the new deactivated_at IS NULL check on Sketch/DirectMessage INSERT (added 2026-07-30, SQL ran successfully but not yet tested by actually attempting an insert from a deactivated account)",
-    "systematic review of all remaining RLS policies across all tables for the same 'EXISTS without real-time relevance check' pattern found in RoomInvite/LiveRoom today - not yet performed",
+    "end-to-end test of the new deactivated_at IS NULL check on Sketch/DirectMessage INSERT (added 2026-07-30 morning, SQL ran successfully but not yet tested by actually attempting an insert from a deactivated account) - offered as a same-session task in the afternoon and explicitly declined for today",
+    "systematic review of all remaining RLS policies across all tables for the same 'EXISTS without real-time relevance check' pattern found in RoomInvite/LiveRoom today - not yet performed, also declined for today's afternoon session",
     "verify Storage policies on storage.objects don't indirectly rely on Sketch table RLS having been broken - not checked today"
-  ]
+  ],
+  "next_session_plan": {
+    "date": "2026-08-02 (Sunday)",
+    "focus": "Step 2 of the launch plan - real video/audio in live rooms via Jitsi (meet.jit.si iframe embed). Needs RoomPage.jsx content to start.",
+    "carried_over_todos": "the three small security items declined today (end-to-end INSERT policy test, systematic policy review, ALLOWED_ORIGIN cleanup) remain open and could be tackled either before or after the Jitsi work, at Noga's discretion"
+  }
 }
 ```
 
@@ -403,7 +487,7 @@ RLS פעיל על כל הטבלאות מאז ה-26.7 - ראו סעיף 11 למצ
 
 ## 12. צ'ק-ליסט אבטחה קבוע - להריץ בסוף כל יום עבודה שנוגע בקוד/DB/הרשאות
 
-נוצר ב-30.7.2026, בעקבות גילוי RLS כבוי + policy כפולה סותרת שנשארו בלי משים באותו יום. המטרה: לתפוס פערים חדשים מוקדם, לפני שהם מצטברים. **לא צריך להריץ את כל הרשימה בכל יום** - רק את הסעיפים הרלוונטיים לשינוי שנעשה (למשל: אם רק עבדת על UI בלי לגעת ב-DB, מספיק סעיף 5).
+נוצר ב-30.7.2026, בעקבות גילוי RLS כבוי + policy כפולה סותרת שנשארו בלי משים באותו יום. המטרה: לתפוס פערים חדשים מוקדם, לפני שהם מצטברים. **לא צריך להריץ את כל הרשימה בכל יום** - רק את הסעיפים הרלוונטיים לשינוי שנעשה (למשל: אם רק עבדת על UI בלי לגעת ב-DB, מספיק סעיף 5). **הערה: מפגש 30.7 אחה"צ לא נגע ב-DB בכלל (רק frontend + תכנון) - לכן לא הורץ הצ'ק-ליסט הזה באותו מפגש, וזה תקין.**
 
 **1. RLS מופעל בפועל בכל הטבלאות (לא רק "policies קיימות"):**
 ```sql

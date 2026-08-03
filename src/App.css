@@ -1,0 +1,45 @@
+/* App.css - עיצוב סופי ומדויק */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { 
+  background-color: #0d0d0d; 
+  color: #fff; 
+  font-family: 'Segoe UI', Tahoma, sans-serif; 
+}
+
+.page-container { padding: 20px; max-width: 1200px; margin: 0 auto; }
+
+/* ה-Header הכהה */
+.main-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  padding: 15px 0; 
+  border-bottom: 1px solid #222; 
+}
+
+/* הבאנר הסגול הכהה */
+.hero-banner { 
+  background-color: #1a1a2e; 
+  padding: 40px; 
+  border-radius: 12px; 
+  text-align: center; 
+  margin: 20px 0;
+}
+
+/* המבנה המרכזי: חדרים בשמאל (300px), פיד בימין (1fr) */
+.main-layout { display: flex; gap: 20px; }
+.sidebar { width: 300px; background-color: #1a1a2e; padding: 20px; border-radius: 12px; }
+.content-feed { flex: 1; background-color: #1a1a2e; padding: 20px; border-radius: 12px; }
+
+/* כפתורים */
+.new-room-btn { width: 100%; padding: 12px; background-color: #2ecc71; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; }
+.upload-btn { padding: 10px 20px; background-color: #7b61ff; border: none; color: white; border-radius: 8px; cursor: pointer; }
+
+/* רשימות וכרטיסיות */
+.feed-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.room-item { background: #0d0d0d; padding: 15px; margin-top: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+.live-status { color: #2ecc71; font-weight: bold; font-size: 0.8rem; }
+
+/* כרטיסיות הפיד (מראה של טראק) */
+.track-card { background: #0d0d0d; padding: 20px; border-radius: 12px; border: 1px solid #222; }
