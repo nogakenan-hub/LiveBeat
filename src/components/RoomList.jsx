@@ -46,38 +46,45 @@ export default function RoomList({ onJoinRoom }) {
   }, []);
 
   return (
-    <div className="p-6 bg-[#1a1d21] min-h-screen text-white" dir="rtl">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">חדרי לייב פעילים</h1>
-        <button 
+    <div className="p-6 bg-background min-h-screen text-foreground" dir="rtl">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">חדרי לייב פעילים</h1>
+        <button
           onClick={() => setIsModalOpen(true)}
-          className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-bold transition"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-lg font-bold text-sm transition"
         >
           + פתח חדר חדש
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5">
         {rooms.map((room) => (
-          <div key={room.id} className="bg-gray-800 p-4 rounded-xl border border-gray-700 flex flex-col justify-between min-h-[160px]">
+          <div
+            key={room.id}
+            className="bg-card border border-border rounded-xl p-2.5 flex flex-col justify-between hover:border-primary/30 transition-all"
+          >
             <div>
-              <h3 className="text-xl font-bold mb-2">{room.name}</h3>
-              <p className="text-gray-400 text-sm mb-4">מארח: {room.host_username}</p>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-live animate-live-pulse"></span>
+                <span className="text-[10px] font-bold text-live">LIVE</span>
+              </div>
+
+              <h3 className="font-bold text-sm truncate mb-0.5">{room.name}</h3>
+              <p className="text-[11px] text-muted-foreground truncate mb-2">מארחת: {room.host_username}</p>
             </div>
-            
-            {/* שורת הכפתורים - מבטיחה ששניהם יוצגו זה לצד זה בבירור */}
-            <div className="flex items-center gap-2 w-full mt-auto">
-              <button 
+
+            <div className="flex items-center gap-1">
+              <button
                 onClick={() => onJoinRoom(room)}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium transition-all text-center"
+                className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground py-1 rounded-md font-medium text-[11px] transition-all text-center"
               >
-                הצטרף לחדר
+                הצטרפות
               </button>
-              
-              <button 
+
+              <button
                 onClick={() => handleDeleteRoom(room.id)}
-                className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-lg transition-all flex items-center justify-center min-w-[40px] h-[40px]"
                 title="מחק חדר"
+                className="shrink-0 w-6 h-6 rounded-md bg-destructive/80 hover:bg-destructive text-white flex items-center justify-center text-[10px] transition-all"
               >
                 🗑️
               </button>
@@ -86,9 +93,9 @@ export default function RoomList({ onJoinRoom }) {
         ))}
       </div>
 
-      <CreateRoomModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <CreateRoomModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         onRoomCreated={fetchRooms}
       />
     </div>

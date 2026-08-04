@@ -2,8 +2,12 @@
 import React, { useState, useContext } from 'react';
 import SketchCard from './components/SketchCard';
 import SketchDetailModal from './components/SketchDetailModal';
+import GroupManagerModal from './components/GroupManagerModal';
+import VisibilityTagModal from './components/VisibilityTagModal';
 import { getClientId } from './lib/clientId';
 import { SupabaseContext } from './main';
+
+var PREVIEW_SKETCH_COUNT = 6; // כמה סקיצות מוצגות בעמוד הבית לפני שצריך ללחוץ "הצג הכל"
 
 function sketchIsVisible(sketch, session) {
   if (sketch.is_public === false) {
@@ -79,6 +83,110 @@ function DeactivatedAccountScreen(props) {
   );
 }
 
+// --- Overlay צף של "כל הקטעים" - מרחף מעל האתר, גלילה פנימית, הרקע נראה מטושטש מאחורה ---
+function AllSketchesOverlay(props) {
+  var isOpen = props.isOpen;
+  var onClose = props.onClose;
+  var sketches = props.sketches;
+  var searchQuery = props.searchQuery;
+  var setSearchQuery = props.setSearchQuery;
+  var filters = props.filters;
+  var activeFilter = props.activeFilter;
+  var setActiveFilter = props.setActiveFilter;
+  var filterButtonClass = props.filterButtonClass;
+  var onOpenModal = props.onOpenModal;
+  var onDeleteSketch = props.onDeleteSketch;
+  var onUploadClick = props.onUploadClick;
+  var session = props.session;
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-sm overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-6xl bg-background border border-border rounded-2xl shadow-2xl mt-4 sm:mt-8 mb-4 sm:mb-8 flex flex-col max-h-[90vh]"
+        onClick={function (e) { e.stopPropagation(); }}
+      >
+        {/* כותרת קבועה למעלה, לא גוללת עם התוכן */}
+        <div className="flex items-center justify-between gap-2 p-4 sm:p-5 border-b border-border shrink-0">
+          <div>
+            <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">🎵 כל הקטעים</h2>
+            <p className="text-[11px] sm:text-sm text-muted-foreground mt-0.5">{sketches.length} קטעים</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onUploadClick}
+              className="hidden sm:flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-all whitespace-nowrap"
+            >
+              + העלאת קטע
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="סגירה"
+              className="flex items-center justify-center h-9 w-9 rounded-lg bg-secondary hover:bg-secondary/70 transition-colors text-lg leading-none"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* תוכן גלילי */}
+        <div className="p-4 sm:p-5 overflow-y-auto">
+          <div className="mb-3 sm:mb-4">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={function (e) { setSearchQuery(e.target.value); }}
+              placeholder="חיפוש לפי כותרת, סגנון או שם היוצר..."
+              className="w-full bg-secondary/40 border border-border rounded-lg px-3 py-2 text-xs sm:text-sm outline-none focus:border-primary transition-colors"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4 sm:mb-6">
+            {filters.map(function (f) {
+              return (
+                <button
+                  type="button"
+                  key={f}
+                  onClick={function () { setActiveFilter(f); }}
+                  className={filterButtonClass(activeFilter === f)}
+                >
+                  {f}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+            {sketches.map(function (sketch) {
+              return (
+                <SketchCard
+                  key={sketch.id}
+                  sketch={sketch}
+                  onOpenModal={onOpenModal}
+                  onDelete={onDeleteSketch}
+                  session={session}
+                />
+              );
+            })}
+          </div>
+
+          {sketches.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              {searchQuery ? 'לא נמצאו קטעים התואמים לחיפוש.' : 'עדיין אין קטעים כאן. תהיי הראשונה להעלות!'}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App(props) {
   var rooms = props.rooms || [];
   var sketches = props.sketches || [];
@@ -120,6 +228,21 @@ export default function App(props) {
   var selectedSketch = selectedSketchState[0];
   var setSelectedSketch = selectedSketchState[1];
 
+  // "הצג הכל" - overlay צף, לא מסך/עמוד נפרד
+  var isAllSketchesOpenState = useState(false);
+  var isAllSketchesOpen = isAllSketchesOpenState[0];
+  var setIsAllSketchesOpen = isAllSketchesOpenState[1];
+
+  // ניהול קבוצות (Stage 3 - ניראות סלקטיבית)
+  var isGroupManagerOpenState = useState(false);
+  var isGroupManagerOpen = isGroupManagerOpenState[0];
+  var setIsGroupManagerOpen = isGroupManagerOpenState[1];
+
+  // תיוג ניראות לחדר ספציפי - שומרים רק את ה-id של החדר שכרגע מתויג
+  var taggingRoomIdState = useState(null);
+  var taggingRoomId = taggingRoomIdState[0];
+  var setTaggingRoomId = taggingRoomIdState[1];
+
   var filters = ['הכל', 'בעבודה', 'פוצח בהצלחה', 'דרוש פידבק'];
 
   // --- אם החשבון המחובר מושהה, מציגות רק את מסך הביטול - חוסמות את שאר האפליקציה ---
@@ -160,6 +283,11 @@ export default function App(props) {
   function handleEditProfileClick() {
     setIsProfileMenuOpen(false);
     if (onOpenEditProfile) onOpenEditProfile();
+  }
+
+  function handleOpenGroupManagerClick() {
+    setIsProfileMenuOpen(false);
+    setIsGroupManagerOpen(true);
   }
 
   function handleDeleteAccountClick() {
@@ -211,6 +339,9 @@ export default function App(props) {
   var displayedSketches = statusFilteredSketches.filter(function (s) {
     return sketchMatchesSearch(s, searchQuery);
   });
+
+  var hasMoreThanPreview = displayedSketches.length > PREVIEW_SKETCH_COUNT;
+  var previewSketches = displayedSketches.slice(0, PREVIEW_SKETCH_COUNT);
 
   var profileButtonLabel;
   if (session) {
@@ -282,6 +413,13 @@ export default function App(props) {
                       className="w-full text-right px-3 py-2 text-sm rounded-lg hover:bg-secondary transition-colors"
                     >
                       עדכון פרטים
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenGroupManagerClick}
+                      className="w-full text-right px-3 py-2 text-sm rounded-lg hover:bg-secondary transition-colors"
+                    >
+                      ניהול קבוצות
                     </button>
                     <button
                       type="button"
@@ -392,26 +530,39 @@ export default function App(props) {
                 }
 
                 return (
-                  <div key={room.id} className="rounded-xl border border-border bg-card p-2.5 sm:p-4 flex flex-col gap-2 hover:border-live/30 transition-all">
+                  <div key={room.id} className="rounded-2xl border border-border bg-card p-2.5 sm:p-3.5 flex flex-col gap-2 hover:border-live/30 transition-all">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-live animate-live-pulse"></span>
+                      <span className="text-[10px] sm:text-xs font-bold text-live">LIVE</span>
+                    </div>
                     <div>
-                      <p className="font-medium text-xs sm:text-base truncate">{room.name}</p>
+                      <p className="font-bold text-xs sm:text-base truncate">{room.name}</p>
                       <p className="text-[10px] sm:text-xs truncate">
                         {isOwner ? (
-                          <span className="text-live font-bold">👑 את מנהלת את החדר</span>
+                          <span className="text-live font-medium">👑 את מנהלת</span>
                         ) : (
-                          <span className="text-muted-foreground">מנהל: {room.host_username}</span>
+                          <span className="text-muted-foreground">מנהל/ת: {room.host_username}</span>
                         )}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] sm:text-xs font-bold text-live animate-pulse">LIVE</span>
                       {actionButton}
+                      {isOwner ? (
+                        <button
+                          type="button"
+                          onClick={function () { setTaggingRoomId(room.id); }}
+                          title="מי רואה את החדר?"
+                          className="shrink-0 text-[10px] sm:text-xs bg-white/5 border border-white/10 hover:bg-white/10 text-foreground/80 px-1.5 py-1 sm:px-2 sm:py-1 rounded-md transition-colors"
+                        >
+                          מי רואה?
+                        </button>
+                      ) : null}
                       {isOwner ? (
                         <button
                           type="button"
                           onClick={function () { handleDeleteClick(room); }}
                           title="מחק חדר"
-                          className="text-[10px] sm:text-xs bg-red-600/80 hover:bg-red-600 text-white px-1.5 py-1 sm:px-2.5 sm:py-1.5 rounded-lg transition-all"
+                          className="shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-md bg-destructive/80 hover:bg-destructive text-white flex items-center justify-center text-[10px] sm:text-xs transition-all"
                         >
                           🗑️
                         </button>
@@ -424,18 +575,29 @@ export default function App(props) {
           </section>
 
           <section id="sketches">
-            <div className="flex items-center justify-between mb-4 sm:mb-6 gap-2">
+            <div className="flex items-center justify-between mb-4 sm:mb-6 gap-2 flex-wrap">
               <div>
                 <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">🎵 פיד היצירה</h2>
                 <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">{sketches.length} קטעים בקהילה</p>
               </div>
-              <button
-                type="button"
-                onClick={handleUploadClick}
-                className="flex items-center gap-1 sm:gap-2 rounded-lg bg-primary px-2.5 py-1.5 sm:px-4 sm:py-2.5 text-[11px] sm:text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-all whitespace-nowrap"
-              >
-                + העלאת קטע
-              </button>
+              <div className="flex items-center gap-2">
+                {hasMoreThanPreview ? (
+                  <button
+                    type="button"
+                    onClick={function () { setIsAllSketchesOpen(true); }}
+                    className="flex items-center gap-1 sm:gap-2 rounded-lg border border-border bg-secondary/50 hover:bg-secondary px-2.5 py-1.5 sm:px-4 sm:py-2.5 text-[11px] sm:text-sm font-medium transition-all whitespace-nowrap"
+                  >
+                    הצג הכל
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  className="flex items-center gap-1 sm:gap-2 rounded-lg bg-primary px-2.5 py-1.5 sm:px-4 sm:py-2.5 text-[11px] sm:text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-all whitespace-nowrap"
+                >
+                  + העלאת קטע
+                </button>
+              </div>
             </div>
 
             <div className="mb-3 sm:mb-4">
@@ -464,7 +626,7 @@ export default function App(props) {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-              {displayedSketches.map(function (sketch) {
+              {previewSketches.map(function (sketch) {
                 return (
                   <SketchCard
                     key={sketch.id}
@@ -500,6 +662,46 @@ export default function App(props) {
         onOpenDirectMessage={onOpenDirectMessage}
         onOpenProfile={onOpenProfile}
       />
+
+      <AllSketchesOverlay
+        isOpen={isAllSketchesOpen}
+        onClose={function () { setIsAllSketchesOpen(false); }}
+        sketches={displayedSketches}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        filters={filters}
+        activeFilter={activeFilter}
+        setActiveFilter={setActiveFilter}
+        filterButtonClass={filterButtonClass}
+        onOpenModal={setSelectedSketch}
+        onDeleteSketch={onDeleteSketch}
+        onUploadClick={handleUploadClick}
+        session={session}
+      />
+
+      <GroupManagerModal
+        isOpen={isGroupManagerOpen}
+        onClose={function () { setIsGroupManagerOpen(false); }}
+        session={session}
+      />
+
+      {taggingRoomId ? (
+        <VisibilityTagModal
+          isOpen={!!taggingRoomId}
+          onClose={function () { setTaggingRoomId(null); }}
+          session={session}
+          contentType="room"
+          contentId={taggingRoomId}
+          contentTitle={(function () {
+            var found = rooms.filter(function (r) { return r.id === taggingRoomId; })[0];
+            return found ? found.name : '';
+          })()}
+          allowInviteOverride={(function () {
+            var found = rooms.filter(function (r) { return r.id === taggingRoomId; })[0];
+            return found ? found.allow_invite_override : true;
+          })()}
+        />
+      ) : null}
     </div>
   );
 }
