@@ -1,103 +1,116 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { SupabaseContext } from '../main';
-import CreateRoomModal from './CreateRoomModal';
+// @ts-nocheck
+import React from 'react';
+import { getClientId } from '../lib/clientId';
 
-export default function RoomList({ onJoinRoom }) {
-  const [rooms, setRooms] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const supabase = useContext(SupabaseContext);
+export default function RoomList(props) {
+  var rooms = props.rooms || [];
+  var pendingRoomIds = props.pendingRoomIds;
+  var approvedRoomIds = props.approvedRoomIds;
+  var guestRoomIds = props.guestRoomIds;
+  var session = props.session;
+  var onJoinRoom = props.onJoinRoom; // בקשת הצטרפות לחדר
+  var onEnterRoom = props.onEnterRoom; // כניסה ישירה לחדר
+  var onDeleteRoom = props.onDeleteRoom; // מחיקת חדר בפועל (אחרי אישור)
+  var onTagVisibility = props.onTagVisibility; // פתיחת "מי רואה?" לחדר ספציפי
 
-  // פונקציה למשיכת החדרים מהדאטהבייס
-  const fetchRooms = async () => {
-    const { data, error } = await supabase
-      .from('LiveRoom')
-      .select('*');
+  function handleJoinClick(room) {
+    if (onJoinRoom) onJoinRoom(room);
+  }
 
-    if (error) {
-      console.error('Error fetching rooms:', error);
-    } else {
-      setRooms(data || []);
+  function handleEnterClick(room) {
+    if (onEnterRoom) onEnterRoom(room);
+  }
+
+  function handleDeleteClick(room) {
+    var message = 'האם למחוק את החדר ' + room.name + '?';
+    var confirmed = window.confirm(message);
+    if (confirmed && onDeleteRoom) {
+      onDeleteRoom(room.id);
     }
-  };
-
-  // פונקציה למחיקת חדר
-  const handleDeleteRoom = async (roomId) => {
-    if (!confirm('האם את בטוחה שברצונך למחוק את החדר הזה?')) return;
-
-    try {
-      const { error } = await supabase
-        .from('LiveRoom')
-        .delete()
-        .eq('id', roomId);
-
-      if (error) throw error;
-
-      // עדכון ה-State כדי להסיר את החדר מיד מהמסך
-      setRooms(prevRooms => prevRooms.filter(room => room.id !== roomId));
-    } catch (error) {
-      console.error('Error deleting room:', error.message);
-      alert('שגיאה במחיקת החדר');
-    }
-  };
-
-  // משיכה ראשונית בטעינת הקומפוננטה
-  useEffect(() => {
-    fetchRooms();
-  }, []);
+  }
 
   return (
-    <div className="p-6 bg-background min-h-screen text-foreground" dir="rtl">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">חדרי לייב פעילים</h1>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-primary hover:bg-primary/90 text-primary-foreground px-5 py-2 rounded-lg font-bold text-sm transition"
-        >
-          + פתח חדר חדש
-        </button>
-      </div>
+    <div className="rooms-scrollbar flex flex-col gap-2 sm:gap-3 max-h-[60vh] sm:max-h-[70vh] overflow-y-auto pr-1">
+      {rooms.map(function (room) {
+        var isPending = pendingRoomIds && pendingRoomIds.has(room.id);
+        var isApprovedGuest = approvedRoomIds && approvedRoomIds.has(room.id);
+        var isReturningGuest = guestRoomIds && guestRoomIds.has(room.id);
+        var isOwner = room.host_user_id
+          ? !!(session && session.user.id === room.host_user_id)
+          : !!(room.host_client_id && room.host_client_id === getClientId());
+        var canEnterDirectly = isOwner || isApprovedGuest || isReturningGuest;
 
-      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5">
-        {rooms.map((room) => (
-          <div
-            key={room.id}
-            className="bg-card border border-border rounded-xl p-2.5 flex flex-col justify-between hover:border-primary/30 transition-all"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-live animate-live-pulse"></span>
-                <span className="text-[10px] font-bold text-live">LIVE</span>
-              </div>
+        var actionButton;
+        if (canEnterDirectly) {
+          actionButton = (
+            <button
+              type="button"
+              onClick={function () { handleEnterClick(room); }}
+              className="text-[10px] sm:text-xs bg-live hover:bg-live/90 text-white px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg transition-all"
+            >
+              כניסה
+            </button>
+          );
+        } else if (isPending) {
+          actionButton = (
+            <span className="text-[10px] sm:text-xs bg-secondary/50 text-muted-foreground px-2 py-1 rounded-lg">
+              ממתין...
+            </span>
+          );
+        } else {
+          actionButton = (
+            <button
+              type="button"
+              onClick={function () { handleJoinClick(room); }}
+              className="text-[10px] sm:text-xs bg-secondary hover:bg-primary hover:text-primary-foreground px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg transition-all"
+            >
+              הצטרפות
+            </button>
+          );
+        }
 
-              <h3 className="font-bold text-sm truncate mb-0.5">{room.name}</h3>
-              <p className="text-[11px] text-muted-foreground truncate mb-2">מארחת: {room.host_username}</p>
+        return (
+          <div key={room.id} className="rounded-2xl border border-border bg-card p-2.5 sm:p-3.5 flex flex-col gap-2 hover:border-live/30 transition-all">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-live animate-live-pulse"></span>
+              <span className="text-[10px] sm:text-xs font-bold text-live">LIVE</span>
             </div>
-
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => onJoinRoom(room)}
-                className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground py-1 rounded-md font-medium text-[11px] transition-all text-center"
-              >
-                הצטרפות
-              </button>
-
-              <button
-                onClick={() => handleDeleteRoom(room.id)}
-                title="מחק חדר"
-                className="shrink-0 w-6 h-6 rounded-md bg-destructive/80 hover:bg-destructive text-white flex items-center justify-center text-[10px] transition-all"
-              >
-                🗑️
-              </button>
+            <div>
+              <p className="font-bold text-xs sm:text-base truncate">{room.name}</p>
+              <p className="text-[10px] sm:text-xs truncate">
+                {isOwner ? (
+                  <span className="text-live font-medium">👑 את מנהלת</span>
+                ) : (
+                  <span className="text-muted-foreground">מנהל/ת: {room.host_username}</span>
+                )}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {actionButton}
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={function () { if (onTagVisibility) onTagVisibility(room.id); }}
+                  title="מי רואה את החדר?"
+                  className="shrink-0 text-[10px] sm:text-xs bg-white/5 border border-white/10 hover:bg-white/10 text-foreground/80 px-1.5 py-1 sm:px-2 sm:py-1 rounded-md transition-colors"
+                >
+                  מי רואה?
+                </button>
+              ) : null}
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={function () { handleDeleteClick(room); }}
+                  title="מחק חדר"
+                  className="shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-md bg-destructive/80 hover:bg-destructive text-white flex items-center justify-center text-[10px] sm:text-xs transition-all"
+                >
+                  🗑️
+                </button>
+              ) : null}
             </div>
           </div>
-        ))}
-      </div>
-
-      <CreateRoomModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onRoomCreated={fetchRooms}
-      />
+        );
+      })}
     </div>
   );
 }
