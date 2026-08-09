@@ -4,10 +4,15 @@ import SketchCard from './components/SketchCard';
 import SketchDetailModal from './components/SketchDetailModal';
 import GroupManagerModal from './components/GroupManagerModal';
 import VisibilityTagModal from './components/VisibilityTagModal';
+import AdminSubscriptionsModal from './components/AdminSubscriptionsModal';
 import RoomList from './components/RoomList';
 import { SupabaseContext } from './main';
 
 var PREVIEW_SKETCH_COUNT = 6; // כמה סקיצות מוצגות בעמוד הבית לפני שצריך ללחוץ "הצג הכל"
+
+// user_id קבוע של נגה - פריט תפריט "ניהול מנויים" מוצג רק למי שמחוברת עם ה-id הזה.
+// זו הגנת UI בלבד לנוחות - האכיפה האמיתית קיימת בשרת (Edge Function admin-set-subscription).
+var ADMIN_USER_ID = 'b10531e5-2115-43d4-99f2-3205c697b01e';
 
 function sketchMatchesSearch(sketch, query) {
   if (!query) return true;
@@ -231,12 +236,19 @@ export default function App(props) {
   var isGroupManagerOpen = isGroupManagerOpenState[0];
   var setIsGroupManagerOpen = isGroupManagerOpenState[1];
 
+  // ניהול מנויים - זמין רק לאדמין (נגה)
+  var isAdminSubscriptionsOpenState = useState(false);
+  var isAdminSubscriptionsOpen = isAdminSubscriptionsOpenState[0];
+  var setIsAdminSubscriptionsOpen = isAdminSubscriptionsOpenState[1];
+
   // תיוג ניראות לחדר ספציפי - שומרים רק את ה-id של החדר שכרגע מתויג
   var taggingRoomIdState = useState(null);
   var taggingRoomId = taggingRoomIdState[0];
   var setTaggingRoomId = taggingRoomIdState[1];
 
   var filters = ['הכל', 'בעבודה', 'פוצח בהצלחה', 'דרוש פידבק'];
+
+  var isAdmin = !!(session && session.user && session.user.id === ADMIN_USER_ID);
 
   // --- אם החשבון המחובר מושהה, מציגות רק את מסך הביטול - חוסמות את שאר האפליקציה ---
   if (session && profile && profile.deactivated_at) {
@@ -265,6 +277,11 @@ export default function App(props) {
   function handleOpenGroupManagerClick() {
     setIsProfileMenuOpen(false);
     setIsGroupManagerOpen(true);
+  }
+
+  function handleOpenAdminSubscriptionsClick() {
+    setIsProfileMenuOpen(false);
+    setIsAdminSubscriptionsOpen(true);
   }
 
   function handleDeleteAccountClick() {
@@ -398,6 +415,15 @@ export default function App(props) {
                     >
                       ניהול קבוצות
                     </button>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={handleOpenAdminSubscriptionsClick}
+                        className="w-full text-right px-3 py-2 text-sm rounded-lg hover:bg-secondary transition-colors"
+                      >
+                        ניהול מנויים (אדמין)
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={handleDeleteAccountClick}
@@ -588,6 +614,13 @@ export default function App(props) {
         onClose={function () { setIsGroupManagerOpen(false); }}
         session={session}
       />
+
+      {isAdmin ? (
+        <AdminSubscriptionsModal
+          isOpen={isAdminSubscriptionsOpen}
+          onClose={function () { setIsAdminSubscriptionsOpen(false); }}
+        />
+      ) : null}
 
       {taggingRoomId ? (
         <VisibilityTagModal

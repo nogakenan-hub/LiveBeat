@@ -15,6 +15,9 @@ const MODERATION_FLAGGED_CATEGORIES = ['Porn', 'Hentai', 'Sexy'];
 const MODERATION_CONFIDENCE_THRESHOLD = 0.9;
 const MODERATION_REQUIRED_CONSECUTIVE_FLAGS = 2; // דורשים זיהוי חוזר, לא מסתפקים בפריים בודד
 
+// מעקב נוכחות חי: כל כמה זמן שולחים "אני עדיין כאן" לשרת
+const PARTICIPANT_HEARTBEAT_INTERVAL_MS = 30000;
+
 const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom }) => {
   const supabase = useContext(SupabaseContext);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
@@ -36,6 +39,16 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
     : (guestName ? guestName : (session ? session.user.email : 'אורח/ת'));
 
   const [presenceKey] = useState(() =>
+    (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random())
+  );
+
+  // מפתח נפרד וסודי למעקב נוכחות/מכסה - בכוונה **לא** אותו מפתח כמו presenceKey.
+  // presenceKey משודר לכולם דרך ה-Presence channel הציבורי (כדי שאפשר יהיה
+  // לזהות מי מחובר/ת ל-WebRTC), ולכן כל משתתף/ת אחר/ת רואה אותו - לא בטוח
+  // לסמוך עליו לזיהוי בעלות על שורת נוכחות. clientKey לעומת זאת נשאר רק
+  // בזיכרון המקומי של הדפדפן ונשלח לשרת רק דרך קריאות RPC ישירות - אף
+  // משתתף/ת אחר/ת לא רואה אותו, כך שאי אפשר להתחזות לשורה של מישהו/י אחר/ת.
+  const clientKeyRef = useRef(
     (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random())
   );
 
@@ -322,6 +335,46 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id, displayName, isOwner, presenceKey]);
 
+  // ------------------------------------------------------------
+  // מעקב נוכחות חי לצורך מכסת המשתתפים (Room_Participant).
+  // בכניסה: רישום מיידי (join_room_participant). כל עוד נמצאים
+  // בחדר: heartbeat כל 30 שניות. ביציאה (כולל סגירת טאב פתאומית):
+  // ניסיון מחיקה מסודר, ובגיבוי - שורות עם heartbeat ישן מ-90 שניות
+  // פשוט לא נספרות יותר במכסה (ראו room_has_capacity ב-DB).
+  // כתיבה עוברת אך ורק דרך פונקציות SECURITY DEFINER בשרת - אין
+  // כתיבה ישירה לטבלה מהקליינט (ראו RLS).
+  // ------------------------------------------------------------
+  useEffect(() => {
+    supabase.rpc('join_room_participant', {
+      p_room_id: room.id,
+      p_client_key: clientKeyRef.current,
+      p_username: displayName,
+    }).then(({ error }) => {
+      if (error) console.error('שגיאה ברישום נוכחות בחדר:', error.message);
+    });
+
+    const heartbeatIntervalId = setInterval(() => {
+      supabase.rpc('heartbeat_room_participant', {
+        p_room_id: room.id,
+        p_client_key: clientKeyRef.current,
+      }).then(({ error }) => {
+        if (error) console.error('שגיאה בעדכון נוכחות בחדר:', error.message);
+      });
+    }, PARTICIPANT_HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      console.log('LEAVE CLEANUP RUNNING', room.id, clientKeyRef.current);
+      clearInterval(heartbeatIntervalId);
+      supabase.rpc('leave_room_participant', {
+        p_room_id: room.id,
+        p_client_key: clientKeyRef.current,
+      }).then(function (result) {
+        console.log('LEAVE RESULT', result);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.id]);
+
   // טעינת מודל הבדיקה האוטומטית פעם אחת - רץ ברקע, לא חוסם את שאר הדף
   useEffect(() => {
     let cancelled = false;
@@ -529,10 +582,24 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
     }
   }, [room.id, displayName, supabase]);
 
+  // יצירת קישור הזמנה - בודקת קודם מול השרת (room_has_capacity) אם יש
+  // עוד מקום בחדר. זו הפעם הראשונה מבין שני נתיבי האכיפה (הזמנה + אישור
+  // בקשה), אבל שתיהן קוראות לאותה פונקציה יחידה - אין כפל לוגיקה.
   const handleInviteClick = async () => {
     setIsCreatingInvite(true);
 
     try {
+      const { data: hasCapacity, error: capacityError } = await supabase.rpc('room_has_capacity', {
+        p_room_id: room.id,
+      });
+
+      if (capacityError) throw capacityError;
+
+      if (!hasCapacity) {
+        alert('החדר הגיע למכסת 6 המשתתפים ללא מנוי פעיל. אפשר לשדרג למנוי כדי להזמין עוד משתתפים, או להמתין שמישהו/י יעזוב/תעזוב.');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('RoomInvite')
         .insert([{ room_id: room.id }])

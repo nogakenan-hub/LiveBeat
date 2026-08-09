@@ -562,28 +562,33 @@ function RootComponent() {
     });
   }
 
+  // אישור בקשת הצטרפות - בודקת קודם מול השרת (room_has_capacity) אם יש
+  // עוד מקום בחדר, לפני שמאשרים. **לא** מכניסה יותר שורה ל-Room_Participant
+  // באופן ידני כאן - השורה נוצרת אוטומטית כש-RoomPage עולה אצל האורח/ת
+  // בפועל (ראו join_room_participant ב-RoomPage.jsx), כך שהטבלה משקפת
+  // מי שבאמת נמצא/ת בחדר עכשיו, לא רק מי שאושרה אי-פעם.
   function handleApproveRequest(request) {
     supabase
-      .from('RoomJoinRequest')
-      .update({ status: 'approved' })
-      .eq('id', request.id)
-      .then(function (updateResult) {
-        if (updateResult.error) {
-          console.error('שגיאה באישור הבקשה:', updateResult.error.message);
-          alert('קרתה שגיאה באישור הבקשה');
+      .rpc('room_has_capacity', { p_room_id: request.room_id })
+      .then(function (capacityResult) {
+        if (capacityResult.error) {
+          console.error('שגיאה בבדיקת מכסת המשתתפים:', capacityResult.error.message);
+          alert('קרתה שגיאה בבדיקת מכסת המשתתפים');
+          return;
+        }
+
+        if (!capacityResult.data) {
+          alert('החדר הגיע למכסת 6 המשתתפים ללא מנוי פעיל. אי אפשר לאשר בקשות נוספות כרגע - אפשר לשדרג למנוי, או להמתין שיתפנה מקום.');
           return;
         }
 
         supabase
-          .from('Room_Participant')
-          .insert([{
-            room_id: request.room_id,
-            username: request.requester_username,
-            room_name: request.room_name,
-          }])
-          .then(function (insertResult) {
-            if (insertResult.error) {
-              console.error('שגיאה באישור הבקשה:', insertResult.error.message);
+          .from('RoomJoinRequest')
+          .update({ status: 'approved' })
+          .eq('id', request.id)
+          .then(function (updateResult) {
+            if (updateResult.error) {
+              console.error('שגיאה באישור הבקשה:', updateResult.error.message);
               alert('קרתה שגיאה באישור הבקשה');
               return;
             }
