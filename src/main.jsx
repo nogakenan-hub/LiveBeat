@@ -731,6 +731,7 @@ function RootComponent() {
               userId={session.user.id}
               onClose={function () { setPendingAction(null); }}
               onProfileSaved={handleProfileSaved}
+              onProfessionalProfileSaved={handleProfessionalProfileUpdated}
             />
           ) : null}
         </React.Fragment>

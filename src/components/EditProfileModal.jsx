@@ -23,6 +23,12 @@ export default function EditProfileModal(props) {
   var isProfessional = isProfessionalState[0];
   var setIsProfessional = isProfessionalState[1];
 
+  // נקבע פעם אחת בכל פתיחה, מה שהיה כשהמודל נפתח - אם כבר true, ה-checkbox ננעל
+  // ולא ניתן לבטל (גיבוי בצד השרת קיים גם בטריגר trg_restrict_is_professional_downgrade)
+  var wasAlreadyProfessionalState = useState(false);
+  var wasAlreadyProfessional = wasAlreadyProfessionalState[0];
+  var setWasAlreadyProfessional = wasAlreadyProfessionalState[1];
+
   var roleTitleState = useState('');
   var roleTitle = roleTitleState[0];
   var setRoleTitle = roleTitleState[1];
@@ -46,6 +52,7 @@ export default function EditProfileModal(props) {
       setDisplayName(profile.display_name || '');
       setBio(profile.bio || '');
       setIsProfessional(!!profile.is_professional);
+      setWasAlreadyProfessional(!!profile.is_professional);
     }
 
     if (professionalProfile) {
@@ -148,15 +155,30 @@ export default function EditProfileModal(props) {
           className="w-full bg-gray-800 border border-gray-700 p-3 mb-4 rounded-lg focus:border-green-500 outline-none text-sm resize-none"
         />
 
-        <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+        <label className={'flex items-center gap-2 mb-1 select-none' + (wasAlreadyProfessional ? ' opacity-70' : ' cursor-pointer')}>
           <input
             type="checkbox"
             checked={isProfessional}
-            onChange={function (e) { setIsProfessional(e.target.checked); }}
+            disabled={wasAlreadyProfessional}
+            onChange={function (e) {
+              if (e.target.checked) {
+                var confirmed = window.confirm(
+                  'שימי לב: לאחר שמירה, לא ניתן יהיה לבטל את הסימון "איש/אשת מקצוע". להמשיך?'
+                );
+                if (!confirmed) return;
+              }
+              setIsProfessional(e.target.checked);
+            }}
             className="w-4 h-4"
           />
           <span className="text-sm">אני גם איש/אשת מקצוע (מורה, מפיק/ה, טכנאי/ת סאונד...)</span>
         </label>
+
+        {wasAlreadyProfessional ? (
+          <p className="text-[11px] text-gray-500 mb-4">🔒 סימון קבוע - לא ניתן לבטל לאחר שנקבע.</p>
+        ) : (
+          <div className="mb-4" />
+        )}
 
         {isProfessional ? (
           <div className="border border-gray-700 rounded-lg p-4 mb-4 flex flex-col gap-3">

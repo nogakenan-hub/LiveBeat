@@ -27,6 +27,8 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
   const [isMediaReady, setIsMediaReady] = useState(false);
   const [moderationWarning, setModerationWarning] = useState(null);
   const [moderationAlerts, setModerationAlerts] = useState([]); // גלוי רק למארחת - התראות על משתתפים אחרים
+  const [messages, setMessages] = useState([]); // הודעות הצ'אט הטקסטואלי של החדר
+  const [messageInput, setMessageInput] = useState('');
 
   const isOwner = session && room.host_user_id === session.user.id;
   const displayName = profile
@@ -44,6 +46,7 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
   const peerConnectionsRef = useRef({}); // key -> RTCPeerConnection
   const moderationModelRef = useRef(null);
   const consecutiveFlagCountRef = useRef(0);
+  const messagesEndRef = useRef(null); // עוגן לגלילה אוטומטית להודעה האחרונה
 
   // מטפלת בזיהוי תוכן פוגעני: עצירת מצלמה/מיקרופון מיידית + התראה למארחת
   const handleModerationFlag = useCallback((flagged) => {
@@ -403,6 +406,73 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
     };
   }, [isMediaReady, isCameraOff, handleModerationFlag]);
 
+  // טעינת היסטוריית הצ'אט + מנוי לעדכוני Realtime על הודעות חדשות בחדר הזה
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMessages = async () => {
+      const { data, error } = await supabase
+        .from('room_messages')
+        .select('*')
+        .eq('room_id', room.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error("שגיאה בטעינת היסטוריית הצ'אט:", error.message);
+        return;
+      }
+      if (!cancelled) {
+        setMessages(data || []);
+      }
+    };
+
+    loadMessages();
+
+    const chatChannel = supabase
+      .channel('room-messages-' + room.id)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'room_messages', filter: 'room_id=eq.' + room.id },
+        (payload) => {
+          setMessages((prev) => [...prev, payload.new]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(chatChannel);
+    };
+  }, [room.id, supabase]);
+
+  // גלילה אוטומטית להודעה האחרונה בכל פעם שמתווספת הודעה
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  // שליחת הודעת צ'אט - sender_user_id אמיתי למחוברות, NULL לאורחים (תואם ל-RLS של room_messages)
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    const trimmed = messageInput.trim();
+    if (!trimmed) return;
+
+    setMessageInput('');
+
+    const { error } = await supabase.from('room_messages').insert([{
+      room_id: room.id,
+      sender_user_id: session ? session.user.id : null,
+      sender_display_name: displayName,
+      content: trimmed,
+    }]);
+
+    if (error) {
+      console.error('שגיאה בשליחת הודעה:', error.message);
+      alert('קרתה שגיאה בשליחת ההודעה, נסי שוב.');
+    }
+  };
+
   const toggleMic = () => {
     if (!localStreamRef.current) return;
     const newMuted = !isMicMuted;
@@ -670,14 +740,48 @@ const RoomPage = ({ room, session, profile, guestName, onLeaveRoom, onCloseRoom 
                   ✕
                 </button>
               </div>
-              <div className="flex-1 p-4 overflow-y-auto">
-                {/* כאן יתווספו ההודעות בעתיד */}
+
+              <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-2">
+                {messages.length === 0 && (
+                  <p className="text-xs text-gray-500 text-center mt-4">אין עדיין הודעות. תהיי הראשונה לכתוב :)</p>
+                )}
+                {messages.map((msg) => {
+                  const isMine = session
+                    ? msg.sender_user_id === session.user.id
+                    : (!msg.sender_user_id && msg.sender_display_name === displayName);
+                  return (
+                    <div key={msg.id} className={'flex flex-col ' + (isMine ? 'items-start' : 'items-end')}>
+                      <span className="text-[10px] text-gray-500 px-1">{msg.sender_display_name}</span>
+                      <span
+                        className={
+                          'max-w-[85%] rounded-xl px-3 py-1.5 text-xs break-words ' +
+                          (isMine ? 'bg-[#252a31] text-white' : 'bg-blue-600 text-white')
+                        }
+                      >
+                        {msg.content}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
               </div>
-              <input
-                type="text"
-                placeholder="כתוב הודעה..."
-                className="p-4 bg-[#1c2026] border-t border-[#2a2e35] outline-none text-white placeholder-gray-400"
-              />
+
+              <form onSubmit={handleSendMessage} className="flex border-t border-[#2a2e35]">
+                <input
+                  type="text"
+                  value={messageInput}
+                  onChange={(e) => setMessageInput(e.target.value)}
+                  placeholder="כתוב הודעה..."
+                  className="flex-1 p-4 bg-[#1c2026] outline-none text-white placeholder-gray-400 text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={!messageInput.trim()}
+                  className="px-4 bg-[#1c2026] text-blue-400 disabled:opacity-40 text-sm font-medium"
+                >
+                  שלח
+                </button>
+              </form>
             </aside>
           </>
         )}
