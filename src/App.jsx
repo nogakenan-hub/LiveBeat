@@ -542,56 +542,71 @@ export default function App(props) {
           </section>
 
           <section id="sketches">
-            <div className="flex items-center justify-between mb-4 sm:mb-6 gap-2 flex-wrap">
-              <div>
-                <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">🎵 פיד היצירה</h2>
-                <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">
-                  <span className="text-primary font-semibold">{sketches.length}</span> קטעים בקהילה
-                </p>
+            <div className="mb-4 sm:mb-6">
+              <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">🎵 פיד היצירה</h2>
+              <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">
+                <span className="text-primary font-semibold">{sketches.length}</span> קטעים בקהילה
+              </p>
+            </div>
+
+            {/* ===== שלב 3 של תוכנית העיצוב: שורת כלים - בנוי לפי rezo_redesign_v3.html במדויק ===== */}
+            <div className="mb-4 mt-3 sm:mb-6 sm:mt-4 flex flex-wrap items-center gap-2.5">
+              <div
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-muted-foreground"
+                style={{ width: '170px' }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M21 21l-4.3-4.3" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={function (e) { setSearchQuery(e.target.value); }}
+                  placeholder="חיפוש..."
+                  className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                />
               </div>
-              <div className="flex items-center gap-2">
-                {hasMoreThanPreview ? (
-                  <button
-                    type="button"
-                    onClick={function () { setIsAllSketchesOpen(true); }}
-                    className="flex items-center gap-1 sm:gap-2 rounded-lg border border-border bg-secondary/50 hover:bg-secondary px-2.5 py-1.5 sm:px-4 sm:py-2.5 text-[11px] sm:text-sm font-medium transition-all whitespace-nowrap"
-                  >
-                    הצג הכל
-                  </button>
-                ) : null}
+
+              <div className="relative">
+                <select
+                  value={activeFilter}
+                  onChange={function (e) { setActiveFilter(e.target.value); }}
+                  className="cursor-pointer appearance-none rounded-full border border-border bg-card py-2 pl-[14px] pr-[34px] text-[12.5px] text-foreground outline-none transition-colors focus:border-primary whitespace-nowrap"
+                >
+                  {filters.map(function (f) {
+                    return (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    );
+                  })}
+                </select>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="pointer-events-none absolute left-[14px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 text-muted-foreground">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </div>
+
+              <div className="flex-1" />
+
+              {hasMoreThanPreview ? (
                 <button
                   type="button"
-                  onClick={handleUploadClick}
-                  className="flex items-center gap-1 sm:gap-2 rounded-lg bg-primary px-2.5 py-1.5 sm:px-4 sm:py-2.5 text-[11px] sm:text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-all whitespace-nowrap"
+                  onClick={function () { setIsAllSketchesOpen(true); }}
+                  className="rounded-full border border-border/70 px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-secondary/40 transition-all whitespace-nowrap"
                 >
-                  + העלאת קטע
+                  הצג הכל
                 </button>
-              </div>
-            </div>
+              ) : null}
 
-            <div className="mb-3 sm:mb-4">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={function (e) { setSearchQuery(e.target.value); }}
-                placeholder="חיפוש לפי כותרת, סגנון או שם היוצר..."
-                className="w-full bg-secondary/40 border border-border rounded-lg px-3 py-2 text-xs sm:text-sm outline-none focus:border-primary transition-colors"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4 sm:mb-6">
-              {filters.map(function (f) {
-                return (
-                  <button
-                    type="button"
-                    key={f}
-                    onClick={function () { setActiveFilter(f); }}
-                    className={filterButtonClass(activeFilter === f)}
-                  >
-                    {f}
-                  </button>
-                );
-              })}
+              <button
+                type="button"
+                onClick={handleUploadClick}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 whitespace-nowrap"
+                style={{ background: 'linear-gradient(135deg, var(--accent-2-hex), var(--accent-hex))' }}
+              >
+                + העלאת קטע
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">

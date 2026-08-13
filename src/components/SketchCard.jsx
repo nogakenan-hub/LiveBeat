@@ -26,6 +26,11 @@ function getStatusColor(status) {
   return 'bg-muted-foreground';
 }
 
+// האם הסטטוס "דרוש פידבק" - שלב 5 של תוכנית העיצוב: רק כרטיסים כאלה מקבלים הילת זוהר, לפי rezo_redesign_v3.html
+function needsFeedbackGlow(status) {
+  return !!(status && status.indexOf('פידבק') !== -1);
+}
+
 // גובהי פסי waveform דקורטיביים - פסבדו-רנדומליים אבל קבועים לפי מזהה הסקיצה
 // (כך שהם לא "יקפצו" בכל רינדור מחדש, אבל גם לא זהים בין כרטיסים)
 var WAVEFORM_BAR_COUNT = 40;
@@ -107,6 +112,14 @@ function IconHeart(props) {
   );
 }
 
+function IconFile(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <path d="M14 2v6h6M6 2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z" />
+    </svg>
+  );
+}
+
 export default function SketchCard(props) {
   var sketch = props.sketch;
   var onOpenModal = props.onOpenModal;
@@ -116,6 +129,7 @@ export default function SketchCard(props) {
   var supabase = useContext(SupabaseContext);
   var audioRef = useRef(null);
   var pendingPlayRef = useRef(false); // true אם צריך לנגן ברגע שה-URL יגיע
+  var menuRef = useRef(null);
 
   var isOwner = session && sketch.uploader_user_id === session.user.id;
   var isPrivate = sketch.is_public === false;
@@ -123,6 +137,10 @@ export default function SketchCard(props) {
   var avatarColor = getAvatarColor(sketch.uploader_username);
   var avatarInitial = (sketch.uploader_username || '?').trim().charAt(0);
   var waveformBars = isSound ? getWaveformBars(sketch.id) : [];
+  var showGlow = needsFeedbackGlow(sketch.status);
+  // הערה: מונה התגובות מוצג רק אם sketch.comment_count אכן קיים בנתונים שמגיעים מהשרת.
+  // אם השדה נקרא אחרת אצלך (או לא קיים בכלל), תגידי לי ונתאים.
+  var hasCommentCount = typeof sketch.comment_count === 'number';
 
   var signedUrlState = useState('');
   var signedUrl = signedUrlState[0];
@@ -144,6 +162,11 @@ export default function SketchCard(props) {
   var isTagModalOpen = isTagModalOpenState[0];
   var setIsTagModalOpen = isTagModalOpenState[1];
 
+  // שלב 5 של תוכנית העיצוב - תפריט תלת-נקודתי (מרכז תיוג/שיתוף/מחיקה)
+  var isMenuOpenState = useState(false);
+  var isMenuOpen = isMenuOpenState[0];
+  var setIsMenuOpen = isMenuOpenState[1];
+
   // ברגע שה-URL החתום מגיע, אם הייתה בקשת ניגון ממתינה - מנגנות מיד
   useEffect(function () {
     if (signedUrl && pendingPlayRef.current && audioRef.current) {
@@ -151,6 +174,20 @@ export default function SketchCard(props) {
       audioRef.current.play();
     }
   }, [signedUrl]);
+
+  // סגירת התפריט בלחיצה מחוץ לו
+  useEffect(function () {
+    if (!isMenuOpen) return;
+    function handleOutsideClick(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setIsMenuOpen(false);
+      }
+    }
+    document.addEventListener('click', handleOutsideClick);
+    return function () {
+      document.removeEventListener('click', handleOutsideClick);
+    };
+  }, [isMenuOpen]);
 
   function handlePlayClick(e) {
     e.stopPropagation();
@@ -195,6 +232,7 @@ export default function SketchCard(props) {
 
   function handleDeleteClick(e) {
     e.stopPropagation();
+    setIsMenuOpen(false);
     var confirmed = window.confirm('האם למחוק את הקטע ' + sketch.title + '?');
     if (confirmed && onDelete) {
       onDelete(sketch);
@@ -207,32 +245,59 @@ export default function SketchCard(props) {
 
   function handleOpenTagModal(e) {
     e.stopPropagation();
+    setIsMenuOpen(false);
     setIsTagModalOpen(true);
   }
+
+  function handleMenuToggle(e) {
+    e.stopPropagation();
+    setIsMenuOpen(function (prev) { return !prev; });
+  }
+
+  function handleShareClick(e) {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    if (navigator.share) {
+      navigator.share({ title: sketch.title, url: window.location.href }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+    }
+  }
+
+  var displayDate = sketch.created_at ? new Date(sketch.created_at).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' }) : '';
 
   return (
     <div
       onClick={function () { onOpenModal(sketch); }}
-      className="rounded-2xl border border-border bg-card p-3.5 hover:border-primary/30 transition-all cursor-pointer relative"
+      className="relative overflow-hidden rounded-lg bg-card p-3.5 cursor-pointer transition-all hover:border-primary/30"
+      style={{
+        border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))',
+        backgroundImage: 'linear-gradient(160deg, rgba(138,111,214,0.12), rgba(30,26,44,0.2) 55%, rgba(15,13,20,0.35))'
+      }}
     >
-      {/* שורה 1: נקודת סטטוס + תגיות (מחיקה / פרטי / תיוג / ז'אנר) - הכל בשורה אחת, בלי absolute, כדי שלא יחפפו */}
-      <div className="flex items-center justify-between mb-1.5">
+      {/* הילת זוהר - רק לכרטיסי "דרוש פידבק", שלב 5 של תוכנית העיצוב */}
+      {showGlow ? (
+        <span
+          className="pointer-events-none absolute -z-10 animate-glow-pulse"
+          style={{
+            top: '-40px',
+            right: '-40px',
+            width: '140px',
+            height: '140px',
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(224,168,79,0.28), transparent 70%)'
+          }}
+        />
+      ) : null}
+
+      {/* שורה 1: נקודת סטטוס + תגיות + תפריט תלת-נקודתי */}
+      <div className="mb-1.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <span className={'w-2 h-2 rounded-full ' + getStatusColor(sketch.status)}></span>
           <span className="text-xs text-muted-foreground">{sketch.status}</span>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isOwner ? (
-            <button
-              type="button"
-              onClick={handleDeleteClick}
-              title="מחק קטע"
-              className="text-xs bg-red-600/80 hover:bg-red-600 text-white px-1.5 py-0.5 rounded-full"
-            >
-              🗑️
-            </button>
-          ) : null}
           {isPrivate ? (
             <span
               title="קטע פרטי - נראה רק לך"
@@ -241,47 +306,65 @@ export default function SketchCard(props) {
               🔒 פרטי
             </span>
           ) : null}
-          {isOwner ? (
-            <button
-              type="button"
-              onClick={handleOpenTagModal}
-              title="תיוג / מי רואה את זה?"
-              className="text-[10px] font-medium bg-white/5 border border-white/10 hover:bg-white/10 text-foreground/80 px-2 py-0.5 rounded-full transition-colors"
-            >
-              תיוג
-            </button>
-          ) : null}
           {sketch.genre ? (
             <span className="text-xs text-foreground/70 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
               {sketch.genre}
             </span>
           ) : null}
+
+          {/* תפריט תלת-נקודתי - מרכז תיוג/שיתוף/מחיקה, במקום כפתורים נפרדים */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={handleMenuToggle}
+              title="עוד אפשרויות"
+              className="flex h-6 w-6 shrink-0 items-center justify-center gap-[2.5px] rounded-md text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <span className="h-[3px] w-[3px] rounded-full bg-current"></span>
+              <span className="h-[3px] w-[3px] rounded-full bg-current"></span>
+              <span className="h-[3px] w-[3px] rounded-full bg-current"></span>
+            </button>
+
+            {isMenuOpen ? (
+              <div
+                className="absolute left-0 top-7 z-20 min-w-[130px] rounded-md border p-1 shadow-2xl"
+                style={{ background: '#26213a', borderColor: 'var(--border-med, rgba(255,255,255,0.16))' }}
+                onClick={stopPropagation}
+              >
+                {isOwner ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenTagModal}
+                    className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-right text-[12.5px] text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                  >
+                    תיוג
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleShareClick}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-right text-[12.5px] text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                >
+                  שיתוף
+                </button>
+                {isOwner ? (
+                  <button
+                    type="button"
+                    onClick={handleDeleteClick}
+                    className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-right text-[12.5px] text-red-400 transition-colors hover:bg-red-500/10"
+                  >
+                    מחיקה
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      {/* שורה 2: כותרת + אייקון סוג קובץ */}
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <h3 className="font-bold text-base truncate">{sketch.title}</h3>
-        <div className="shrink-0 w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-          {isSound ? (
-            <IconMusic className="w-3.5 h-3.5 text-primary" />
-          ) : (
-            <span className="text-base">{fileTypeIcons[sketch.file_type] || '📄'}</span>
-          )}
-        </div>
-      </div>
-
-      {/* שורה 3: אווטאר + שם מעלה/ת */}
-      <div className="flex items-center gap-1.5 mb-2.5">
-        <span className={'w-4 h-4 shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold text-white ' + avatarColor}>
-          {avatarInitial}
-        </span>
-        <span className="text-xs text-muted-foreground truncate">{sketch.uploader_username}</span>
-      </div>
-
-      {/* שורה 4: waveform + ניגון אמיתי - רק לקבצי סאונד */}
+      {/* שורה 2: מדיה - waveform לקבצי סאונד (בלי כותרת, כמו במוקאפ), אייקון+תאריך+כותרת לשאר */}
       {isSound ? (
-        <div className="flex items-center gap-2 bg-secondary/60 rounded-lg px-2 py-1.5 mb-2.5">
+        <div dir="ltr" className="mb-2.5 flex items-center gap-2 rounded-lg bg-black/20 px-2 py-1.5" style={{ border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}>
           {sketch.file_url ? (
             <audio
               ref={audioRef}
@@ -294,7 +377,27 @@ export default function SketchCard(props) {
             />
           ) : null}
 
-          <div className="flex-1 flex items-center gap-[2px] h-4 overflow-hidden">
+          {displayDate ? (
+            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">{displayDate}</span>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handlePlayClick}
+            disabled={isLoadingAudio}
+            title={isPlaying ? 'השהיה' : 'השמעה'}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-60"
+          >
+            {isLoadingAudio ? (
+              <IconLoader className="w-3 h-3 text-foreground" />
+            ) : isPlaying ? (
+              <IconPause className="w-2.5 h-2.5 text-foreground" />
+            ) : (
+              <IconPlay className="w-2.5 h-2.5 text-foreground ml-[1px]" />
+            )}
+          </button>
+
+          <div className="flex h-6 flex-1 items-center gap-[2px] overflow-hidden">
             {waveformBars.map(function (h, i) {
               var isPlayed = (i / WAVEFORM_BAR_COUNT) < progress;
               return (
@@ -306,36 +409,51 @@ export default function SketchCard(props) {
               );
             })}
           </div>
-
-          <button
-            type="button"
-            onClick={handlePlayClick}
-            disabled={isLoadingAudio}
-            title={isPlaying ? 'השהיה' : 'השמעה'}
-            className="shrink-0 w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center disabled:opacity-60"
+        </div>
+      ) : (
+        <div dir="ltr" className="mb-2.5 flex items-center gap-3 rounded-lg bg-black/20 px-2 py-1.5" style={{ border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}>
+          {displayDate ? (
+            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">{displayDate}</span>
+          ) : null}
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
+            style={{ background: 'linear-gradient(135deg, rgba(138,111,214,0.25), rgba(138,111,214,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
           >
-            {isLoadingAudio ? (
-              <IconLoader className="w-2.5 h-2.5 text-foreground" />
-            ) : isPlaying ? (
-              <IconPause className="w-2.5 h-2.5 text-foreground" />
+            {sketch.file_type === 'video' ? (
+              <span className="text-base">🎬</span>
             ) : (
-              <IconPlay className="w-2.5 h-2.5 text-foreground" />
+              <IconFile className="h-4 w-4" style={{ color: 'var(--accent-2-hex, #b48fe8)' }} />
             )}
+          </div>
+          <span className="flex-1 truncate text-[12.5px] font-semibold text-foreground">{sketch.title}</span>
+        </div>
+      )}
+
+      {/* שורה 4: פוטר - אווטאר+שם+מונה תגובות, לייק/תגובה */}
+      <div className="flex items-center justify-between border-t pt-1.5" style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.09))' }}>
+        <div className="flex items-center gap-1.5">
+          <span className={'w-[18px] h-[18px] shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold text-white ' + avatarColor}>
+            {avatarInitial}
+          </span>
+          <span className="text-xs text-muted-foreground truncate">{sketch.uploader_username}</span>
+          {hasCommentCount ? (
+            <span
+              className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
+            >
+              {sketch.comment_count}
+              <IconMessage className="w-2.5 h-2.5 text-muted-foreground" />
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <button type="button" onClick={stopPropagation} title="לייק" className="hover:text-foreground transition-colors">
+            <IconHeart className="w-4 h-4" />
+          </button>
+          <button type="button" onClick={stopPropagation} title="תגובה" className="hover:text-foreground transition-colors">
+            <IconMessage className="w-4 h-4" />
           </button>
         </div>
-      ) : null}
-
-      {/* שורה 5: פעולות - שיתוף / תגובה / לייק */}
-      <div className="border-t border-border pt-1.5 flex items-center gap-4">
-        <button type="button" onClick={stopPropagation} title="שיתוף" className="text-muted-foreground hover:text-foreground transition-colors">
-          <IconShare className="w-4 h-4" />
-        </button>
-        <button type="button" onClick={stopPropagation} title="תגובה" className="text-muted-foreground hover:text-foreground transition-colors">
-          <IconMessage className="w-4 h-4" />
-        </button>
-        <button type="button" onClick={stopPropagation} title="לייק" className="text-muted-foreground hover:text-foreground transition-colors">
-          <IconHeart className="w-4 h-4" />
-        </button>
       </div>
 
       {isTagModalOpen ? (

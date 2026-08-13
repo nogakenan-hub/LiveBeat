@@ -48,6 +48,7 @@
     --accent-hex: #8a6fd6;
     --accent-2-hex: #b48fe8;
     --accent-soft: rgba(138, 111, 214, 0.16);
+    --accent-text-hex: #c3b0ee;
     --live-hex: #4fd18b;
     --live-glow: rgba(79, 209, 139, 0.35);
     --border-subtle: rgba(255, 255, 255, 0.09);
@@ -77,4 +78,13 @@
 
 .animate-live-pulse {
   animation: pulse-live 1.5s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 3.5s ease-in-out infinite;
 }
