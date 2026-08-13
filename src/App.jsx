@@ -214,6 +214,11 @@ export default function App(props) {
   var activeFilter = activeFilterState[0];
   var setActiveFilter = activeFilterState[1];
 
+  // באנר "ברוכה השבה" - שלב 2 של תוכנית העיצוב. ההסתרה זמנית בלבד (state רגיל) - חוזר בכל רענון, לפי בקשת נגה.
+  var welcomeBannerState = useState(true);
+  var isWelcomeBannerVisible = welcomeBannerState[0];
+  var setIsWelcomeBannerVisible = welcomeBannerState[1];
+
   var searchQueryState = useState('');
   var searchQuery = searchQueryState[0];
   var setSearchQuery = searchQueryState[1];
@@ -302,6 +307,10 @@ export default function App(props) {
     if (onOpenUploadModal) onOpenUploadModal();
   }
 
+  function handleDismissWelcomeBanner() {
+    setIsWelcomeBannerVisible(false);
+  }
+
   function filterButtonClass(isActive) {
     var base = 'px-2.5 py-1 sm:px-4 sm:py-1.5 rounded-full text-[11px] sm:text-sm font-medium transition-all ';
     if (isActive) {
@@ -348,53 +357,53 @@ export default function App(props) {
     profileButtonLabel = 'הפרופיל שלי';
   }
 
+  var welcomeGreeting;
+  if (session && profile && profile.display_name) {
+    welcomeGreeting = 'ברוכה השבה, ' + profile.display_name;
+  } else {
+    welcomeGreeting = 'ברוכים הבאים לקהילה';
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground" dir="rtl">
       <style>{'.rooms-scrollbar::-webkit-scrollbar{width:6px}.rooms-scrollbar::-webkit-scrollbar-track{background:transparent}.rooms-scrollbar::-webkit-scrollbar-thumb{background-color:#52525b;border-radius:9999px}.rooms-scrollbar::-webkit-scrollbar-button{display:none;width:0;height:0}.rooms-scrollbar{scrollbar-width:thin;scrollbar-color:#52525b transparent}'}</style>
 
+      {/* ===== Header - עודכן בשלב 1 של תוכנית העיצוב: לוגו ממורכז, בלי ניווט, פעמון במקום מעטפה ===== */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-              <span className="text-lg">🎵</span>
-            </div>
-            <span className="text-lg font-bold tracking-tight">LiveBeat</span>
-          </div>
-          <nav className="hidden md:flex items-center gap-1">
-            <a href="#sketches" className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg transition-colors">פיד היצירה</a>
-            <a href="#live" className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg transition-colors">חדרי לייב</a>
-          </nav>
+        <div className="mx-auto grid max-w-7xl grid-cols-[auto_1fr] items-center gap-4 px-4 py-3 sm:px-6">
 
+          {/* צד ימני (ב-RTL, כי זה ה-child הראשון): הודעות + פרופיל מקובצים יחד */}
           <div className="flex items-center gap-2">
-          {session ? (
-            <button
-              type="button"
-              onClick={function () { if (onOpenInbox) onOpenInbox(); }}
-              className="relative flex items-center justify-center rounded-xl border border-border bg-secondary/50 h-10 w-10 hover:bg-secondary transition-colors"
-              title="הודעות"
-            >
-              ✉️
-              {unreadMessageCount > 0 ? (
-                <span className="absolute -top-1 -left-1 bg-red-600 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
-                  {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
-                </span>
-              ) : null}
-            </button>
-          ) : null}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={handleProfileButtonClick}
-              className="flex items-center gap-2 rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm font-medium hover:bg-secondary transition-colors"
-            >
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">👤</div>
-              {profileButtonLabel}
-              {profile && profile.is_professional ? (
-                <span title="גם איש/אשת מקצוע" className="text-xs">🎓</span>
-              ) : null}
-            </button>
+            {session ? (
+              <button
+                type="button"
+                onClick={function () { if (onOpenInbox) onOpenInbox(); }}
+                className="relative flex items-center justify-center rounded-xl border border-border bg-secondary/50 h-10 w-10 hover:bg-secondary transition-colors"
+                title="הודעות"
+              >
+                ✉️
+                {unreadMessageCount > 0 ? (
+                  <span className="absolute -top-1 -left-1 bg-red-600 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
+                    {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                  </span>
+                ) : null}
+              </button>
+            ) : null}
 
-            {isProfileMenuOpen ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleProfileButtonClick}
+                className="flex items-center gap-2 rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm font-medium hover:bg-secondary transition-colors"
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">👤</div>
+                {profileButtonLabel}
+                {profile && profile.is_professional ? (
+                  <span title="גם איש/אשת מקצוע" className="text-xs">🎓</span>
+                ) : null}
+              </button>
+
+              {isProfileMenuOpen ? (
               <div className="absolute left-0 mt-2 w-56 rounded-xl border border-border bg-card p-2 shadow-2xl z-50">
                 {session ? (
                   <React.Fragment>
@@ -457,15 +466,41 @@ export default function App(props) {
                 )}
               </div>
             ) : null}
+            </div>
           </div>
+
+          {/* השטח הנותר: הלוגו, ממורכז בתוכו */}
+          <div className="flex items-center justify-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+              <span className="text-lg">🎵</span>
+            </div>
+            <span className="text-lg font-bold tracking-tight">Rezo</span>
           </div>
         </div>
       </header>
 
-      <section className="border-b border-border bg-card/50 px-4 py-10 text-center">
-        <h1 className="text-3xl font-bold mb-2">ברוכים הבאים לקהילה 🎵</h1>
-        <p className="text-muted-foreground">העלו התחלות וטיוטות, קבלו פידבק, פצחו יחד. חדרי הלייב מחכים לכם.</p>
-      </section>
+      {/* ===== באנר "ברוכה השבה" - עודכן בשלב 2: שתי שורות, מיושר לאותו מיכל כמו שאר העמוד ===== */}
+      {isWelcomeBannerVisible ? (
+        <div className="border-b border-border bg-card/50">
+          <div className="mx-auto flex max-w-7xl items-start justify-between gap-3 px-3 py-3 sm:px-6 flex-wrap">
+            <div className="text-right">
+              <p className="text-sm font-bold sm:text-base">
+                {welcomeGreeting} 🎵
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+                יש <span className="text-primary font-semibold">{sketches.length}</span> קטעים חדשים בפיד ו-<span className="text-primary font-semibold">{rooms.length}</span> חדרי לייב פעילים כרגע.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleDismissWelcomeBanner}
+              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              הסתר ✕
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mx-auto max-w-7xl px-3 py-6 sm:px-6 sm:py-8">
         <div className="grid grid-cols-[150px_1fr] sm:grid-cols-[320px_1fr] gap-3 sm:gap-8 items-start">
@@ -477,7 +512,9 @@ export default function App(props) {
                 <span className="hidden sm:inline">חדרים בלייב</span>
                 <span className="sm:hidden">חדרים</span>
               </h2>
-              <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">{rooms.length} פעילים</p>
+              <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">
+                <span className="text-primary font-semibold">{rooms.length}</span> פעילים
+              </p>
             </div>
 
             <div
@@ -508,7 +545,9 @@ export default function App(props) {
             <div className="flex items-center justify-between mb-4 sm:mb-6 gap-2 flex-wrap">
               <div>
                 <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">🎵 פיד היצירה</h2>
-                <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">{sketches.length} קטעים בקהילה</p>
+                <p className="text-[11px] sm:text-sm text-muted-foreground mt-1">
+                  <span className="text-primary font-semibold">{sketches.length}</span> קטעים בקהילה
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 {hasMoreThanPreview ? (

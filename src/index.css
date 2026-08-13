@@ -6,26 +6,54 @@
 
 @layer base {
   :root {
-    --background: 220 20% 7%;
-    --foreground: 210 20% 95%;
-    --card: 220 18% 11%;
-    --card-foreground: 210 20% 92%;
-    --primary: 262 83% 68%;
+    /* === עודכן בשלב 0 של תוכנית העיצוב המחודש (09.08.2026) ===
+       הערכים כאן הם המרה מדויקת מ-hex ל-HSL של הפלטה הסופית
+       שסוכמה בסשן העיצוב (rezo_redesign_v3.html / rezo_mobile_v2.html).
+       hex המקור נשמר בהערה ליד כל שורה, למקרה שיהיה צריך לאמת/לתקן. */
+
+    --background: 255 24% 10%;        /* #16131f */
+    --foreground: 255 31% 95%;        /* #f0eef6 */
+
+    --card: 253 26% 14%;              /* #1e1a2c */
+    --card-foreground: 255 31% 95%;   /* #f0eef6 */
+
+    --primary: 256 56% 64%;           /* #8a6fd6 - accent הסגול הראשי */
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 16% 16%;
-    --secondary-foreground: 210 20% 85%;
-    --muted: 220 16% 14%;
-    --muted-foreground: 215 15% 55%;
-    --accent: 338 85% 62%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+
+    --secondary: 253 20% 18%;         /* משטח משני, בין card לבין accent-2 */
+    --secondary-foreground: 253 14% 68%; /* #a8a3ba */
+
+    --muted: 253 16% 15%;
+    --muted-foreground: 253 10% 48%;  /* #726d85 */
+
+    --accent: 265 66% 73%;            /* #b48fe8 - accent-2, הגוון הבהיר יותר */
+    --accent-foreground: 255 24% 10%;
+
+    --destructive: 0 72% 51%;         /* לא שונה בשלב זה - לא עלה בסשן העיצוב */
     --destructive-foreground: 0 0% 98%;
-    --border: 220 16% 18%;
-    --input: 220 16% 16%;
-    --ring: 262 83% 68%;
-    --live: 142 71% 45%;
-    --radius: 0.75rem;
+
+    --border: 256 12% 18%;            /* מקביל ל-border-subtle (rgba(255,255,255,0.09) על הרקע) */
+    --input: 253 20% 18%;
+    --ring: 256 56% 64%;              /* = primary */
+
+    --live: 148 59% 57%;              /* #4fd18b */
+
+    --radius: 0.625rem;               /* 10px */
     --font-inter: 'Inter', sans-serif;
+
+    /* === ערכים נוספים, לא בפורמט HSL של shadcn ===
+       דרושים כפי שהם (hex/rgba) לשלבים הבאים של התוכנית - גרדיאנטים
+       וזוהרים (glow) על כרטיסי חדרים וסקיצות, שלא נוח לבנות רק עם
+       hsl(var(--x)). לא נוגעים בשום דבר קיים, רק מוסיפים. */
+    --accent-hex: #8a6fd6;
+    --accent-2-hex: #b48fe8;
+    --accent-soft: rgba(138, 111, 214, 0.16);
+    --live-hex: #4fd18b;
+    --live-glow: rgba(79, 209, 139, 0.35);
+    --border-subtle: rgba(255, 255, 255, 0.09);
+    --border-med: rgba(255, 255, 255, 0.16);
+    --radius-sm: 0.5rem;              /* 8px */
+    --radius-pill: 999px;
   }
 }
 
@@ -35,6 +63,7 @@
   }
   body {
     background-color: hsl(var(--background));
+    background-image: radial-gradient(circle at 15% 0%, rgba(138, 111, 214, 0.08), transparent 40%);
     color: hsl(var(--foreground));
     font-family: var(--font-inter);
     direction: rtl;
