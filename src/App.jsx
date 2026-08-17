@@ -96,6 +96,7 @@ function AllSketchesOverlay(props) {
   var onDeleteSketch = props.onDeleteSketch;
   var onUploadClick = props.onUploadClick;
   var session = props.session;
+  var onOpenAuth = props.onOpenAuth;
 
   if (!isOpen) return null;
 
@@ -169,6 +170,7 @@ function AllSketchesOverlay(props) {
                   onOpenModal={onOpenModal}
                   onDelete={onDeleteSketch}
                   session={session}
+                  onOpenAuth={onOpenAuth}
                 />
               );
             })}
@@ -503,7 +505,7 @@ export default function App(props) {
       ) : null}
 
       <div className="mx-auto max-w-7xl px-3 py-6 sm:px-6 sm:py-8">
-        <div className="grid grid-cols-[150px_1fr] sm:grid-cols-[320px_1fr] gap-3 sm:gap-8 items-start">
+        <div className="grid grid-cols-[120px_1fr] sm:grid-cols-[320px_1fr] gap-3 sm:gap-8 items-start">
 
           <section id="live">
             <div className="mb-4 sm:mb-6">
@@ -517,15 +519,25 @@ export default function App(props) {
               </p>
             </div>
 
-            <div
-              onClick={function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (onOpenCreateModal) onOpenCreateModal();
-              }}
-              className="w-full flex items-center justify-center gap-1 rounded-lg bg-live px-2 py-2 text-[11px] sm:text-sm font-medium text-white hover:bg-live/90 transition-all mb-3 sm:mb-4 cursor-pointer text-center"
-            >
-              + חדר חדש
+            {/* עודכן: הריווח (mt/mb) עצמו נשאר זהה לשורת הכלים בפיד - זה כבר נבדק ואושר.
+                אבל עכשיו לשורת הכלים יש עד 4 שורות במובייל (חיפוש/סינון/הצג הכל/העלאה - כל אחת בשורה
+                נפרדת), בעוד שכאן יש רק כפתור אחד - זה עלול ליצור מחדש הפרש גובה גדול יותר מקודם.
+                הריווח הדמה הבא הוא זמני ומכוון לפצות על שורה נוספת אחת בלבד - כדאי לבדוק בפועל
+                אם הוא מספיק אחרי הפירוק ל-4 שורות, וייתכן שיהיה צריך לחשוב מחדש על הפתרון. */}
+            <div className="mt-3 sm:mt-4 mb-4 sm:mb-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+              <button
+                type="button"
+                onClick={function (e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (onOpenCreateModal) onOpenCreateModal();
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-live px-3 text-xs font-semibold text-white hover:bg-live/90 transition-all whitespace-nowrap"
+              >
+                <span className="text-sm leading-none">+</span>
+                פתיחת חדר
+              </button>
+              <div className="h-8 w-3/4 sm:hidden" aria-hidden="true" />
             </div>
 
             <RoomList
@@ -549,67 +561,79 @@ export default function App(props) {
               </p>
             </div>
 
-            {/* ===== שלב 3 של תוכנית העיצוב: שורת כלים - בנוי לפי rezo_redesign_v3.html במדויק ===== */}
-            <div className="mb-4 mt-3 sm:mb-6 sm:mt-4 flex flex-wrap items-center gap-2.5">
-              <div
-                className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-muted-foreground"
-                style={{ width: '170px' }}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M21 21l-4.3-4.3" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={function (e) { setSearchQuery(e.target.value); }}
-                  placeholder="חיפוש..."
-                  className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                />
-              </div>
+            {/* ===== מותאם למובייל: חזרה לקיבוץ 2 שורות (חיפוש+סינון / הצג הכל+העלאה) - 4 שורות נפרדות
+                היה גם גבוה מדי וגם לא מאוזן (פילים צרים נמתחים לרוחב מלא). הפעם בלי flex-1 על
+                כפתורי השורה השנייה - הם בגודל תוכן קבוע, אז לא "מתפחים" כשרק אחד מהם מוצג. ===== */}
+            <div className="mb-4 mt-3 sm:mb-6 sm:mt-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-2.5 w-[92%] mx-auto">
 
-              <div className="relative">
-                <select
-                  value={activeFilter}
-                  onChange={function (e) { setActiveFilter(e.target.value); }}
-                  className="cursor-pointer appearance-none rounded-full border border-border bg-card py-2 pl-[14px] pr-[34px] text-[12.5px] text-foreground outline-none transition-colors focus:border-primary whitespace-nowrap"
+              {/* שורה 1 במובייל: חיפוש (תופס את רוב הרוחב) + סינון (קומפקטי) */}
+              <div className="flex items-center gap-2 sm:contents">
+                <div
+                  className="flex h-8 flex-1 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-muted-foreground sm:flex-none sm:w-[170px] sm:shrink-0"
                 >
-                  {filters.map(function (f) {
-                    return (
-                      <option key={f} value={f}>
-                        {f}
-                      </option>
-                    );
-                  })}
-                </select>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="pointer-events-none absolute left-[14px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 text-muted-foreground">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="M21 21l-4.3-4.3" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={function (e) { setSearchQuery(e.target.value); }}
+                    placeholder="חיפוש..."
+                    className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+
+                <div className="relative shrink-0">
+                  <select
+                    value={activeFilter}
+                    onChange={function (e) { setActiveFilter(e.target.value); }}
+                    className="h-8 cursor-pointer appearance-none rounded-full border border-border bg-card pl-[14px] pr-[34px] text-[12.5px] text-foreground outline-none transition-colors focus:border-primary whitespace-nowrap"
+                  >
+                    {filters.map(function (f) {
+                      return (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="pointer-events-none absolute left-[14px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 text-muted-foreground">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </div>
               </div>
 
-              <div className="flex-1" />
+              {/* רווח גמיש - קיים רק בדסקטופ (שורה אחת), נעלם לגמרי במובייל */}
+              <div className="hidden sm:block sm:flex-1" />
 
-              {hasMoreThanPreview ? (
+              {/* שורה 2 במובייל: הצג הכל + העלאת קטע - גודל תוכן קבוע (לא flex-1), לא נמתחים */}
+              <div className="flex items-center gap-2 sm:contents">
+                {hasMoreThanPreview ? (
+                  <button
+                    type="button"
+                    onClick={function () { setIsAllSketchesOpen(true); }}
+                    className="inline-flex h-8 items-center justify-center rounded-full border border-border/70 px-3 text-xs font-semibold text-foreground hover:bg-secondary/40 transition-all whitespace-nowrap"
+                  >
+                    הצג הכל
+                  </button>
+                ) : null}
+
                 <button
                   type="button"
-                  onClick={function () { setIsAllSketchesOpen(true); }}
-                  className="rounded-full border border-border/70 px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-secondary/40 transition-all whitespace-nowrap"
+                  onClick={handleUploadClick}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 whitespace-nowrap"
+                  style={{ background: 'linear-gradient(135deg, var(--accent-2-hex), var(--accent-hex))' }}
                 >
-                  הצג הכל
+                  + העלאת קטע
                 </button>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={handleUploadClick}
-                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 whitespace-nowrap"
-                style={{ background: 'linear-gradient(135deg, var(--accent-2-hex), var(--accent-hex))' }}
-              >
-                + העלאת קטע
-              </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+            {/* עודכן: תמיד 2 כרטיסים בשורה (מ-sm ומעלה), ממורכז מתחת לשורת הכלים.
+                כוונון סופי: max-w-4xl (כמעט לא הורגש) -> max-w-2xl (מרווח קצת יותר מדי) -> max-w-3xl (איזון).
+                שינוי זה חל רק בפיד הרגיל כאן - לא ב-overlay של "הצג הכל" למטה. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 max-w-3xl mx-auto">
               {previewSketches.map(function (sketch) {
                 return (
                   <SketchCard
@@ -618,6 +642,7 @@ export default function App(props) {
                     onOpenModal={setSelectedSketch}
                     onDelete={onDeleteSketch}
                     session={session}
+                    onOpenAuth={onOpenAuth}
                   />
                 );
               })}
@@ -645,6 +670,7 @@ export default function App(props) {
         onStatusChange={handleSketchStatusChanged}
         onOpenDirectMessage={onOpenDirectMessage}
         onOpenProfile={onOpenProfile}
+        onOpenAuth={onOpenAuth}
       />
 
       <AllSketchesOverlay
@@ -661,6 +687,7 @@ export default function App(props) {
         onDeleteSketch={onDeleteSketch}
         onUploadClick={handleUploadClick}
         session={session}
+        onOpenAuth={onOpenAuth}
       />
 
       <GroupManagerModal

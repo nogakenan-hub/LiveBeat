@@ -4,6 +4,7 @@ import VisibilityTagModal from './VisibilityTagModal';
 
 var fileTypeIcons = { sound: '🎵', video: '🎬', text: '📄' };
 var SIGNED_URL_EXPIRY_SECONDS = 3600; // זהה לקבוע ב-SketchDetailModal.jsx
+var PREVIEW_LIMIT_SECONDS = 20; // מגבלת תצוגה מקדימה למי שלא מחוברת - זהה ל-SketchDetailModal.jsx
 
 // פלטת צבעים לאווטאר - נבחר לפי שם המשתמש/ת בצורה קבועה (אותו שם = אותו צבע תמיד)
 var AVATAR_PALETTE = ['bg-primary', 'bg-amber-500', 'bg-sky-500', 'bg-emerald-500', 'bg-pink-500', 'bg-violet-500'];
@@ -47,6 +48,36 @@ function getWaveformBars(seed) {
     bars.push(20 + (value % 100) * 0.7);
   }
   return bars;
+}
+
+// --- קבלת קישור נגינה, בהתאם לספק האחסון של הרשומה ---
+// זהה בעיקרון לפונקציה באותו שם ב-SketchDetailModal.jsx (מוכפלת בכוונה, אין
+// קובץ utils משותף בפרויקט כרגע - אותה שיטה שכבר קיימת עם buildSafeFilePath וכדומה).
+function fetchPlaybackUrl(supabase, table, record) {
+  if (record.storage_provider === 'backblaze') {
+    return supabase.functions
+      .invoke('media-presigned-url', {
+        body: { action: 'download', table: table, recordId: record.id },
+      })
+      .then(function (result) {
+        if (result.error || (result.data && result.data.error)) {
+          console.error('שגיאה בקבלת קישור מ-Backblaze:', result.error ? result.error.message : result.data.error);
+          return null;
+        }
+        return result.data.downloadUrl;
+      })
+      .catch(function (error) {
+        console.error('שגיאה בקבלת קישור מ-Backblaze:', error.message);
+        return null;
+      });
+  }
+
+  return supabase.storage
+    .from('sketch-files')
+    .createSignedUrl(record.file_url, SIGNED_URL_EXPIRY_SECONDS)
+    .then(function (signResult) {
+      return signResult.data ? signResult.data.signedUrl : null;
+    });
 }
 
 function IconMusic(props) {
@@ -125,6 +156,7 @@ export default function SketchCard(props) {
   var onOpenModal = props.onOpenModal;
   var onDelete = props.onDelete;
   var session = props.session;
+  var onOpenAuth = props.onOpenAuth;
 
   var supabase = useContext(SupabaseContext);
   var audioRef = useRef(null);
@@ -205,23 +237,35 @@ export default function SketchCard(props) {
 
     pendingPlayRef.current = true;
     setIsLoadingAudio(true);
-    supabase.storage
-      .from('sketch-files')
-      .createSignedUrl(sketch.file_url, SIGNED_URL_EXPIRY_SECONDS)
-      .then(function (result) {
-        setIsLoadingAudio(false);
-        if (result.data) {
-          setSignedUrl(result.data.signedUrl);
-        } else {
-          pendingPlayRef.current = false;
-        }
-      });
+    fetchPlaybackUrl(supabase, 'Sketch', sketch).then(function (url) {
+      setIsLoadingAudio(false);
+      if (url) {
+        setSignedUrl(url);
+      } else {
+        pendingPlayRef.current = false;
+      }
+    });
   }
 
   function handleTimeUpdate() {
     var audio = audioRef.current;
-    if (audio && audio.duration) {
+    if (!audio) return;
+
+    if (audio.duration) {
       setProgress(audio.currentTime / audio.duration);
+    }
+
+    // תצוגה מקדימה בלבד למי שלא מחוברת - עוצרות אחרי 20 שניות ופותחות את
+    // מסך ההתחברות עם קוד סיבה 'preview', כדי שיוצג הסבר להקשר בתוך AuthModal
+    if (!session && audio.currentTime >= PREVIEW_LIMIT_SECONDS) {
+      audio.pause();
+      audio.currentTime = 0;
+      setProgress(0);
+      if (onOpenAuth) {
+        onOpenAuth('preview');
+      } else {
+        alert('זו תצוגה מקדימה של 20 שניות. כדי להאזין לקטע במלואו, צריך להתחבר או להירשם.');
+      }
     }
   }
 

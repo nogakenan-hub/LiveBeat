@@ -33,6 +33,9 @@ function RootComponent() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // סיבת הפתיחה של מסך ההתחברות - מוצגת כהודעת הקשר בתוך AuthModal.
+  // null = פתיחה "רגילה" (למשל מכפתור "התחברות" בתפריט), בלי הודעה נוספת.
+  const [authModalReason, setAuthModalReason] = useState(null);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -67,13 +70,26 @@ function RootComponent() {
     });
   }
 
+  // עודכן: מביאה גם ספירת תגובות (SketchFeedback) לכל סקיצה, באותה שאילתה אחת -
+  // Supabase/PostgREST תומכים בזה נייטיבית דרך foreign-table embedding עם count.
+  // כל שורה חוזרת עם שדה נוסף SketchFeedback: [{ count: N }] - ממפות אותו לשדה
+  // שטוח comment_count (מספר רגיל), כי זה מה ש-SketchCard.jsx כבר מצפה לו.
   function fetchSketches() {
     supabase
       .from('Sketch')
-      .select('*')
+      .select('*, SketchFeedback(count)')
       .order('created_at', { ascending: false })
       .then(function (result) {
-        if (result.data) setSketches(result.data);
+        if (result.data) {
+          var withCommentCounts = result.data.map(function (row) {
+            var copy = Object.assign({}, row);
+            var feedbackCountRow = row.SketchFeedback && row.SketchFeedback[0];
+            copy.comment_count = feedbackCountRow && typeof feedbackCountRow.count === 'number' ? feedbackCountRow.count : 0;
+            delete copy.SketchFeedback;
+            return copy;
+          });
+          setSketches(withCommentCounts);
+        }
       });
   }
 
@@ -355,9 +371,12 @@ function RootComponent() {
     }
   }
 
+  // עודכן: לסקיצה חדשה עדיין אין תגובות - קובעות comment_count=0 מפורשות,
+  // כדי ש-SketchCard.jsx יציג "0" מיד במקום להסתיר את התג (השדה חסר לגמרי).
   function handleSketchUploaded(newSketch) {
+    var sketchWithCommentCount = Object.assign({ comment_count: 0 }, newSketch);
     setSketches(function (prev) {
-      return [newSketch].concat(prev);
+      return [sketchWithCommentCount].concat(prev);
     });
   }
 
@@ -378,11 +397,14 @@ function RootComponent() {
       });
   }
 
+  // עודכן: מיזוג במקום החלפה מלאה. עדכון סטטוס (מ-SketchDetailModal) מחזיר
+  // רק את עמודות טבלת Sketch עצמה - אין בו comment_count (זה לא עמודה אמיתית).
+  // Object.assign שומר על comment_count הקיים כש-updatedSketch לא כולל אותו בכלל.
   function handleUpdateSketch(updatedSketch) {
     setSketches(function (prev) {
       return prev.map(function (s) {
         if (s.id === updatedSketch.id) {
-          return updatedSketch;
+          return Object.assign({}, s, updatedSketch);
         }
         return s;
       });
@@ -432,6 +454,7 @@ function RootComponent() {
   function handleOpenCreateModal() {
     if (!session) {
       setPendingAction('create');
+      setAuthModalReason(null);
       setIsAuthModalOpen(true);
     } else if (!profile) {
       setPendingAction('create');
@@ -443,6 +466,7 @@ function RootComponent() {
   function handleOpenUploadModal() {
     if (!session) {
       setPendingAction('upload');
+      setAuthModalReason(null);
       setIsAuthModalOpen(true);
     } else if (!profile) {
       setPendingAction('upload');
@@ -454,6 +478,7 @@ function RootComponent() {
   function handleRequestJoin(room) {
     if (!session) {
       setPendingAction({ type: 'join', room: room });
+      setAuthModalReason(null);
       setIsAuthModalOpen(true);
     } else if (!profile) {
       setPendingAction({ type: 'join', room: room });
@@ -497,7 +522,11 @@ function RootComponent() {
     });
   }
 
-  function handleOpenAuth() {
+  // מקבלת "סיבה" אופציונלית (מחרוזת) שמסבירה למה נפתח מסך ההתחברות -
+  // מוצגת כהודעת הקשר בתוך AuthModal. בלי פרמטר (כמו מכפתור "התחברות"
+  // הרגיל בתפריט הפרופיל) - נפתח בלי הודעה נוספת, כמו תמיד.
+  function handleOpenAuth(reason) {
+    setAuthModalReason(reason || null);
     setIsAuthModalOpen(true);
   }
 
@@ -692,8 +721,10 @@ function RootComponent() {
           />
           <AuthModal
             isOpen={isAuthModalOpen}
+            reason={authModalReason}
             onClose={function () {
               setIsAuthModalOpen(false);
+              setAuthModalReason(null);
               setPendingAction(null);
             }}
           />

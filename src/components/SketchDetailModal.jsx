@@ -6,26 +6,12 @@ var videoFallbackText = 'הדפדפן שלך לא תומך בנגן וידאו.'
 var textLinkLabel = 'פתיחה או הורדה של הקובץ';
 var MAX_FEEDBACK_FILE_SIZE = 50 * 1024 * 1024;
 var SIGNED_URL_EXPIRY_SECONDS = 3600;
+var PREVIEW_LIMIT_SECONDS = 20; // מגבלת תצוגה מקדימה למי שלא מחוברת - זהה ל-SketchCard.jsx
 
 function detectFileType(file) {
   if (file.type.indexOf('audio/') === 0) return 'sound';
   if (file.type.indexOf('video/') === 0) return 'video';
   return 'text';
-}
-
-function getSafeFileExtension(fileName) {
-  var parts = fileName.split('.');
-  if (parts.length < 2) return 'bin';
-  var ext = parts[parts.length - 1];
-  var cleanExt = ext.replace(/[^a-zA-Z0-9]/g, '');
-  if (!cleanExt) return 'bin';
-  return cleanExt.toLowerCase();
-}
-
-function buildSafeFilePath(file) {
-  var randomId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '_' + String(Math.random()).slice(2);
-  var ext = getSafeFileExtension(file.name);
-  return randomId + '.' + ext;
 }
 
 function buildChildrenMap(list) {
@@ -38,6 +24,74 @@ function buildChildrenMap(list) {
     map[key].push(fb);
   });
   return map;
+}
+
+// --- קבלת קישור נגינה, בהתאם לספק האחסון של הרשומה ---
+// רשומות ישנות (storage_provider='supabase', ברירת המחדל) ממשיכות לקבל
+// Signed URL רגיל מ-Supabase Storage בדיוק כמו היום.
+// רשומות חדשות (storage_provider='backblaze') עוברות דרך ה-Edge Function
+// media-presigned-url, שבודקת הרשאות מול ה-DB (עם ה-JWT של המשתמשת עצמה,
+// או ללא התחברות בכלל - RLS מחליטה בשני המקרים) לפני שהיא מנפיקה קישור.
+function fetchPlaybackUrl(supabase, table, record) {
+  if (record.storage_provider === 'backblaze') {
+    return supabase.functions
+      .invoke('media-presigned-url', {
+        body: { action: 'download', table: table, recordId: record.id },
+      })
+      .then(function (result) {
+        if (result.error || (result.data && result.data.error)) {
+          console.error('שגיאה בקבלת קישור מ-Backblaze:', result.error ? result.error.message : result.data.error);
+          return null;
+        }
+        return result.data.downloadUrl;
+      })
+      .catch(function (error) {
+        console.error('שגיאה בקבלת קישור מ-Backblaze:', error.message);
+        return null;
+      });
+  }
+
+  return supabase.storage
+    .from('sketch-files')
+    .createSignedUrl(record.file_url, SIGNED_URL_EXPIRY_SECONDS)
+    .then(function (signResult) {
+      return signResult.data ? signResult.data.signedUrl : null;
+    });
+}
+
+// --- העלאת קובץ מדיה חדש (מצורף לפידבק) ל-Backblaze B2 ---
+// אותה זרימה בדיוק כמו ב-UploadSketchModal.jsx: מבקשות URL חתום, מעלות
+// ישירות אליו, ומחזירות את מפתח הקובץ שנוצר בצד השרת.
+function uploadMediaToBackblaze(supabase, file) {
+  return supabase.functions
+    .invoke('media-presigned-url', {
+      body: {
+        action: 'upload',
+        fileName: file.name,
+        contentType: file.type,
+        declaredSizeBytes: file.size,
+      },
+    })
+    .then(function (presignResult) {
+      if (presignResult.error || (presignResult.data && presignResult.data.error)) {
+        var presignMessage = presignResult.error ? presignResult.error.message : presignResult.data.error;
+        throw new Error(presignMessage);
+      }
+
+      var uploadUrl = presignResult.data.uploadUrl;
+      var objectKey = presignResult.data.objectKey;
+
+      return fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      }).then(function (putResponse) {
+        if (!putResponse.ok) {
+          throw new Error('העלאת הקובץ נכשלה (סטטוס ' + putResponse.status + ')');
+        }
+        return objectKey;
+      });
+    });
 }
 
 // --- הגנה על קבצים המצורפים לתגובות: אותו עיקרון "טקסט בלבד" שחל על הקטע הראשי ---
@@ -397,6 +451,7 @@ export default function SketchDetailModal(props) {
   var onStatusChange = props.onStatusChange;
   var onOpenDirectMessage = props.onOpenDirectMessage;
   var onOpenProfile = props.onOpenProfile;
+  var onOpenAuth = props.onOpenAuth;
 
   var supabase = useContext(SupabaseContext);
 
@@ -404,8 +459,8 @@ export default function SketchDetailModal(props) {
   var feedbackList = feedbackListState[0];
   var setFeedbackList = feedbackListState[1];
 
-  // הקישור החי (Signed URL, תקף לשעה) לקובץ המדיה הראשי של הקטע עצמו.
-  // sketch.file_url מכיל רק את הנתיב הגולמי ב-Storage, לא URL ציבורי.
+  // הקישור החי (Signed URL/Presigned URL, תקף לשעה) לקובץ המדיה הראשי של הקטע עצמו.
+  // sketch.file_url מכיל רק את הנתיב/מפתח הגולמי ב-Storage, לא URL ציבורי.
   var sketchSignedUrlState = useState('');
   var sketchSignedUrl = sketchSignedUrlState[0];
   var setSketchSignedUrl = sketchSignedUrlState[1];
@@ -499,15 +554,12 @@ export default function SketchDetailModal(props) {
           return;
         }
 
-        // יוצרות Signed URL לכל קובץ מדיה מצורף - זמני, ותקף רק למי שהמדיניות מרשה לו
+        // מפנות כל קובץ מצורף לזרימת ה-URL הנכונה, לפי storage_provider של אותה רשומה
         Promise.all(
           withMedia.map(function (fb) {
-            return supabase.storage
-              .from('sketch-files')
-              .createSignedUrl(fb.file_url, SIGNED_URL_EXPIRY_SECONDS)
-              .then(function (signResult) {
-                return { id: fb.id, signedUrl: signResult.data ? signResult.data.signedUrl : null };
-              });
+            return fetchPlaybackUrl(supabase, 'SketchFeedback', fb).then(function (url) {
+              return { id: fb.id, signedUrl: url };
+            });
           })
         ).then(function (signedResults) {
           var signedMap = {};
@@ -535,7 +587,7 @@ export default function SketchDetailModal(props) {
     loadFeedback();
   }, [isOpen, sketch]);
 
-  // יוצרות Signed URL לקובץ המדיה הראשי של הקטע בכל פתיחה
+  // יוצרות קישור נגינה לקובץ המדיה הראשי של הקטע בכל פתיחה
   useEffect(function () {
     if (!isOpen || !sketch || !sketch.file_url) {
       setSketchSignedUrl('');
@@ -546,14 +598,11 @@ export default function SketchDetailModal(props) {
       return;
     }
 
-    supabase.storage
-      .from('sketch-files')
-      .createSignedUrl(sketch.file_url, SIGNED_URL_EXPIRY_SECONDS)
-      .then(function (result) {
-        if (result.data) {
-          setSketchSignedUrl(result.data.signedUrl);
-        }
-      });
+    fetchPlaybackUrl(supabase, 'Sketch', sketch).then(function (url) {
+      if (url) {
+        setSketchSignedUrl(url);
+      }
+    });
   }, [isOpen, sketch]);
 
   if (!isOpen || !sketch) {
@@ -575,6 +624,24 @@ export default function SketchDetailModal(props) {
 
   function handleOpenFile() {
     window.open(sketchSignedUrl, '_blank');
+  }
+
+  // תצוגה מקדימה בלבד למי שלא מחוברת - עוצרות את הניגון הראשי (סאונד/וידאו)
+  // אחרי 20 שניות ופותחות את מסך ההתחברות עם קוד סיבה 'preview', כדי שיוצג
+  // הסבר להקשר בתוך AuthModal. חלה רק על הקטע הראשי, לא על קבצים מצורפים
+  // לפידבקים - אלה יטופלו בהמשך אם יידרש.
+  function handleMainMediaTimeUpdate(e) {
+    if (session) return;
+    var mediaEl = e.target;
+    if (mediaEl.currentTime >= PREVIEW_LIMIT_SECONDS) {
+      mediaEl.pause();
+      mediaEl.currentTime = 0;
+      if (onOpenAuth) {
+        onOpenAuth('preview');
+      } else {
+        alert('זו תצוגה מקדימה של 20 שניות. כדי לצפות/להאזין לקטע במלואו, צריך להתחבר או להירשם.');
+      }
+    }
   }
 
   function resetNewFeedbackAttachment() {
@@ -682,7 +749,7 @@ export default function SketchDetailModal(props) {
 
     setIsSubmitting(true);
 
-    function finishInsert(fileUrl, fileType, extractedTextValue) {
+    function finishInsert(fileUrl, fileType, extractedTextValue, storageProvider) {
       var row = {
         sketch_id: sketch.id,
         author_username: profile.display_name,
@@ -693,6 +760,10 @@ export default function SketchDetailModal(props) {
         file_type: fileType || null,
         extracted_text: extractedTextValue || null,
       };
+
+      if (storageProvider) {
+        row.storage_provider = storageProvider;
+      }
 
       supabase
         .from('SketchFeedback')
@@ -727,17 +798,14 @@ export default function SketchDetailModal(props) {
           var isMediaAttachment = result.data.file_url && (result.data.file_type === 'sound' || result.data.file_type === 'video');
 
           if (isMediaAttachment) {
-            // יוצרות Signed URL מיידי כדי שהתגובה שהוזנה הרגע תהיה מיד ניתנת לניגון
-            supabase.storage
-              .from('sketch-files')
-              .createSignedUrl(result.data.file_url, SIGNED_URL_EXPIRY_SECONDS)
-              .then(function (signResult) {
-                var itemWithSigned = Object.assign({}, result.data);
-                if (signResult.data) {
-                  itemWithSigned.resolved_file_url = signResult.data.signedUrl;
-                }
-                addToList(itemWithSigned);
-              });
+            // יוצרות קישור נגינה מיידי כדי שהתגובה שהוזנה הרגע תהיה מיד ניתנת לניגון
+            fetchPlaybackUrl(supabase, 'SketchFeedback', result.data).then(function (url) {
+              var itemWithSigned = Object.assign({}, result.data);
+              if (url) {
+                itemWithSigned.resolved_file_url = url;
+              }
+              addToList(itemWithSigned);
+            });
           } else {
             addToList(result.data);
           }
@@ -745,24 +813,19 @@ export default function SketchDetailModal(props) {
     }
 
     if (hasMedia) {
-      var filePath = buildSafeFilePath(attachedFile);
-      supabase.storage
-        .from('sketch-files')
-        .upload(filePath, attachedFile)
-        .then(function (uploadResult) {
-          if (uploadResult.error) {
-            setIsSubmitting(false);
-            console.error('שגיאה בהעלאת הקובץ:', uploadResult.error.message);
-            alert('קרתה שגיאה בהעלאת הקובץ המצורף');
-            return;
-          }
-          // שומרות רק את הנתיב הגולמי - לא URL ציבורי
-          finishInsert(filePath, detectFileType(attachedFile), null);
+      uploadMediaToBackblaze(supabase, attachedFile)
+        .then(function (objectKey) {
+          finishInsert(objectKey, detectFileType(attachedFile), null, 'backblaze');
+        })
+        .catch(function (error) {
+          setIsSubmitting(false);
+          console.error('שגיאה בהעלאת הקובץ:', error.message);
+          alert('קרתה שגיאה בהעלאת הקובץ המצורף: ' + error.message);
         });
     } else if (hasDoc) {
-      finishInsert(null, 'text', docText || '');
+      finishInsert(null, 'text', docText || '', null);
     } else {
-      finishInsert(null, null, null);
+      finishInsert(null, null, null, null);
     }
   }
 
@@ -799,7 +862,7 @@ export default function SketchDetailModal(props) {
           return prev.map(function (fb) {
             if (fb.id === feedbackId) {
               var updated = Object.assign({}, result.data);
-              // שומרות את ה-Signed URL שכבר נוצר לפריט הזה (העדכון מה-DB לא מחזיר אותו)
+              // שומרות את הקישור שכבר נוצר לפריט הזה (העדכון מה-DB לא מחזיר אותו)
               if (fb.resolved_file_url) {
                 updated.resolved_file_url = fb.resolved_file_url;
               }
@@ -893,15 +956,21 @@ export default function SketchDetailModal(props) {
 
         <div className="mb-4">
           {sketch.file_type === 'sound' ? (
-            <audio controls className="w-full" src={sketchSignedUrl}>
+            <audio controls className="w-full" src={sketchSignedUrl} onTimeUpdate={handleMainMediaTimeUpdate}>
               {soundFallbackText}
             </audio>
           ) : null}
 
           {sketch.file_type === 'video' ? (
-            <video controls className="w-full rounded-lg" src={sketchSignedUrl}>
+            <video controls className="w-full rounded-lg" src={sketchSignedUrl} onTimeUpdate={handleMainMediaTimeUpdate}>
               {videoFallbackText}
             </video>
+          ) : null}
+
+          {!session && (sketch.file_type === 'sound' || sketch.file_type === 'video') ? (
+            <p className="text-[11px] text-gray-500 mt-1.5">
+              תצוגה מקדימה של 20 שניות - להאזנה/צפייה מלאה צריך להתחבר או להירשם.
+            </p>
           ) : null}
 
           {sketch.file_type === 'text' ? (

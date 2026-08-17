@@ -17,21 +17,6 @@ function isWordFile(file) {
   return false;
 }
 
-function getSafeFileExtension(fileName) {
-  var parts = fileName.split('.');
-  if (parts.length < 2) return 'bin';
-  var ext = parts[parts.length - 1];
-  var cleanExt = ext.replace(/[^a-zA-Z0-9]/g, '');
-  if (!cleanExt) return 'bin';
-  return cleanExt.toLowerCase();
-}
-
-function buildSafeFilePath(file) {
-  var randomId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '_' + String(Math.random()).slice(2);
-  var ext = getSafeFileExtension(file.name);
-  return randomId + '.' + ext;
-}
-
 function arrayBufferToBase64(buffer) {
   var binary = '';
   var bytes = new Uint8Array(buffer);
@@ -149,6 +134,81 @@ export default function UploadSketchModal(props) {
     }
   }
 
+  // --- זרימת ההעלאה החדשה: קבצי מדיה (סאונד/וידאו) עוברים ל-Backblaze B2 ---
+  // שלב 1: מבקשות מה-Edge Function URL חתום להעלאה ישירה (הפונקציה גם
+  //         מייצרת שם קובץ בטוח בצד השרת - אין יותר buildSafeFilePath כאן).
+  // שלב 2: מעלות את הקובץ עצמו ישירות ל-B2 עם fetch רגיל (לא דרך Supabase).
+  // שלב 3: שומרות שורת Sketch עם storage_provider='backblaze' ועם מפתח
+  //        הקובץ (objectKey) שחזר מה-Edge Function.
+  function performMediaUpload(fileType) {
+    supabase.functions
+      .invoke('media-presigned-url', {
+        body: {
+          action: 'upload',
+          fileName: file.name,
+          contentType: file.type,
+          declaredSizeBytes: file.size,
+        },
+      })
+      .then(function (presignResult) {
+        if (presignResult.error || (presignResult.data && presignResult.data.error)) {
+          var presignMessage = presignResult.error ? presignResult.error.message : presignResult.data.error;
+          throw new Error(presignMessage);
+        }
+
+        var uploadUrl = presignResult.data.uploadUrl;
+        var objectKey = presignResult.data.objectKey;
+
+        return fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type },
+          body: file,
+        }).then(function (putResponse) {
+          if (!putResponse.ok) {
+            throw new Error('העלאת הקובץ נכשלה (סטטוס ' + putResponse.status + ')');
+          }
+          return objectKey;
+        });
+      })
+      .then(function (objectKey) {
+        var row = {
+          title: title,
+          file_url: objectKey,
+          file_type: fileType,
+          genre: genre,
+          status: 'דרוש פידבק',
+          uploader_username: profile.display_name,
+          uploader_user_id: session.user.id,
+          is_public: isPublic,
+          storage_provider: 'backblaze',
+        };
+
+        return supabase
+          .from('Sketch')
+          .insert([row])
+          .select()
+          .single();
+      })
+      .then(function (insertResult) {
+        if (insertResult.error) {
+          throw insertResult.error;
+        }
+
+        if (typeof onSketchUploaded === 'function') {
+          onSketchUploaded(insertResult.data);
+        }
+
+        setIsSubmitting(false);
+        resetForm();
+        onClose();
+      })
+      .catch(function (error) {
+        console.error('שגיאה בהעלאת הקובץ:', error.message);
+        alert('קרתה שגיאה בהעלאת הקובץ: ' + error.message);
+        setIsSubmitting(false);
+      });
+  }
+
   function handleUpload(e) {
     if (e && e.preventDefault) e.preventDefault();
 
@@ -208,54 +268,7 @@ export default function UploadSketchModal(props) {
       return;
     }
 
-    var filePath = buildSafeFilePath(file);
-
-    supabase.storage
-      .from('sketch-files')
-      .upload(filePath, file)
-      .then(function (uploadResult) {
-        if (uploadResult.error) {
-          throw uploadResult.error;
-        }
-
-        // שומרות את הנתיב הגולמי בלבד - לא URL ציבורי.
-        // ה-bucket פרטי; קישור זמני (Signed URL) ייווצר "לפי דרישה" רק למי שיש לו הרשאה,
-        // בהתאם ל-RLS על storage.objects שמכבדת את is_public/uploader_user_id של הקטע.
-        var row = {
-          title: title,
-          file_url: filePath,
-          file_type: fileType,
-          genre: genre,
-          status: 'דרוש פידבק',
-          uploader_username: profile.display_name,
-          uploader_user_id: session.user.id,
-          is_public: isPublic,
-        };
-
-        return supabase
-          .from('Sketch')
-          .insert([row])
-          .select()
-          .single();
-      })
-      .then(function (insertResult) {
-        if (insertResult.error) {
-          throw insertResult.error;
-        }
-
-        if (typeof onSketchUploaded === 'function') {
-          onSketchUploaded(insertResult.data);
-        }
-
-        setIsSubmitting(false);
-        resetForm();
-        onClose();
-      })
-      .catch(function (error) {
-        console.error('שגיאה בהעלאת הקובץ:', error.message);
-        alert('קרתה שגיאה בהעלאת הקובץ: ' + error.message);
-        setIsSubmitting(false);
-      });
+    performMediaUpload(fileType);
   }
 
   function resetForm() {

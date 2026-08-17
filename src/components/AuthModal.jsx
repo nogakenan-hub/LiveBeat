@@ -1,13 +1,22 @@
 import React, { useState, useContext } from 'react';
 import { SupabaseContext } from '../main';
 
-export default function AuthModal({ isOpen, onClose }) {
+// מיפוי בין קוד סיבה (מחרוזת קצרה, נשלחת מהמקום שקורא ל-onOpenAuth) לבין
+// טקסט ההקשר שיוצג למשתמשת. אם מתווספת סיבה חדשה בעתיד (למשל חסימת
+// פעולה ספציפית אחרת) - מוסיפים כאן שורה נוספת, בלי לגעת בשאר הקובץ.
+var REASON_MESSAGES = {
+  preview: 'זו הייתה תצוגה מקדימה של 20 שניות. כדי להאזין/לצפות בקטע במלואו, צריך להתחבר או להירשם.',
+};
+
+export default function AuthModal({ isOpen, onClose, reason }) {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [linkSent, setLinkSent] = useState(false);
   const supabase = useContext(SupabaseContext);
 
   if (!isOpen) return null;
+
+  var contextMessage = reason ? REASON_MESSAGES[reason] : null;
 
   const handleSendLink = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -54,7 +63,15 @@ export default function AuthModal({ isOpen, onClose }) {
           </>
         ) : (
           <>
-            <h2 className="text-2xl font-bold mb-6">התחברות</h2>
+            <h2 className="text-2xl font-bold mb-2">התחברות</h2>
+
+            {contextMessage ? (
+              <p className="text-sm text-primary/90 bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 mb-4">
+                {contextMessage}
+              </p>
+            ) : (
+              <div className="mb-6" />
+            )}
 
             <label className="block text-sm text-gray-400 mb-1">כתובת אימייל *</label>
             <input
