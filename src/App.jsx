@@ -97,6 +97,15 @@ function AllSketchesOverlay(props) {
   var onUploadClick = props.onUploadClick;
   var session = props.session;
   var onOpenAuth = props.onOpenAuth;
+  // חדש - מועבר הלאה ל-SketchCard כאן, בדיוק כמו בפיד הרגיל למטה
+  var rooms = props.rooms || [];
+  var pendingRoomIds = props.pendingRoomIds;
+  var approvedRoomIds = props.approvedRoomIds;
+  var guestRoomIds = props.guestRoomIds;
+  var onJoinRoom = props.onJoinRoom;
+  var onEnterRoom = props.onEnterRoom;
+  var onOpenCreateRoomForSketch = props.onOpenCreateRoomForSketch;
+  var onSketchUpdated = props.onSketchUpdated;
 
   if (!isOpen) return null;
 
@@ -171,6 +180,14 @@ function AllSketchesOverlay(props) {
                   onDelete={onDeleteSketch}
                   session={session}
                   onOpenAuth={onOpenAuth}
+                  rooms={rooms}
+                  pendingRoomIds={pendingRoomIds}
+                  approvedRoomIds={approvedRoomIds}
+                  guestRoomIds={guestRoomIds}
+                  onJoinRoom={onJoinRoom}
+                  onEnterRoom={onEnterRoom}
+                  onOpenCreateRoomForSketch={onOpenCreateRoomForSketch}
+                  onSketchUpdated={onSketchUpdated}
                 />
               );
             })}
@@ -191,6 +208,7 @@ export default function App(props) {
   var rooms = props.rooms || [];
   var sketches = props.sketches || [];
   var onOpenCreateModal = props.onOpenCreateModal;
+  var onOpenCreateRoomForSketch = props.onOpenCreateRoomForSketch;
   var onDeleteRoom = props.onDeleteRoom;
   var onRequestJoin = props.onRequestJoin;
   var onEnterRoom = props.onEnterRoom;
@@ -643,6 +661,14 @@ export default function App(props) {
                     onDelete={onDeleteSketch}
                     session={session}
                     onOpenAuth={onOpenAuth}
+                    rooms={rooms}
+                    pendingRoomIds={pendingRoomIds}
+                    approvedRoomIds={approvedRoomIds}
+                    guestRoomIds={guestRoomIds}
+                    onJoinRoom={onRequestJoin}
+                    onEnterRoom={onEnterRoom}
+                    onOpenCreateRoomForSketch={onOpenCreateRoomForSketch}
+                    onSketchUpdated={onUpdateSketch}
                   />
                 );
               })}
@@ -688,6 +714,14 @@ export default function App(props) {
         onUploadClick={handleUploadClick}
         session={session}
         onOpenAuth={onOpenAuth}
+        rooms={rooms}
+        pendingRoomIds={pendingRoomIds}
+        approvedRoomIds={approvedRoomIds}
+        guestRoomIds={guestRoomIds}
+        onJoinRoom={onRequestJoin}
+        onEnterRoom={onEnterRoom}
+        onOpenCreateRoomForSketch={onOpenCreateRoomForSketch}
+        onSketchUpdated={onUpdateSketch}
       />
 
       <GroupManagerModal

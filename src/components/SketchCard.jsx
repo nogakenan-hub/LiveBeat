@@ -151,12 +151,41 @@ function IconFile(props) {
   );
 }
 
+// חדש 20.08.2026 - אייקון עין (ציבורי) / עין חצויה (פרטי), לכפתור נראות לחיץ ליוצרת
+function IconEye(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function IconEyeOff(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 export default function SketchCard(props) {
   var sketch = props.sketch;
   var onOpenModal = props.onOpenModal;
   var onDelete = props.onDelete;
   var session = props.session;
   var onOpenAuth = props.onOpenAuth;
+  // חדש 19-20.08.2026 - הכל קשור לחדרי לייב מתוך הכרטיס + עדכון נראות
+  var rooms = props.rooms || [];
+  var pendingRoomIds = props.pendingRoomIds;
+  var approvedRoomIds = props.approvedRoomIds;
+  var guestRoomIds = props.guestRoomIds;
+  var onJoinRoom = props.onJoinRoom; // בקשת הצטרפות לחדר
+  var onEnterRoom = props.onEnterRoom; // כניסה ישירה לחדר
+  var onOpenCreateRoomForSketch = props.onOpenCreateRoomForSketch; // פתיחת CreateRoomModal מוכן מראש עם sketch_id
+  var onSketchUpdated = props.onSketchUpdated; // callback אחרי עדכון נראות - מעדכן את ה-state ב-main.jsx
 
   var supabase = useContext(SupabaseContext);
   var audioRef = useRef(null);
@@ -171,12 +200,32 @@ export default function SketchCard(props) {
   var waveformBars = isSound ? getWaveformBars(sketch.id) : [];
   var showGlow = needsFeedbackGlow(sketch.status);
   // הערה: מונה התגובות מוצג רק אם sketch.comment_count אכן קיים בנתונים שמגיעים מהשרת.
-  // אם השדה נקרא אחרת אצלך (או לא קיים בכלל), תגידי לי ונתאים.
   var hasCommentCount = typeof sketch.comment_count === 'number';
+
+  // --- חדר לייב פעיל לסקיצה הזו, אם קיים: החדר הראשון (אם יש כמה) שה-sketch_id שלו תואם ---
+  // מתעדכן אוטומטית כש-rooms משתנה (כולל DELETE של Realtime ב-main.jsx) - לכן ברגע שהחדר
+  // נסגר, activeRoom הופך ל-null בעצמו, בלי צורך בקוד נוסף כאן.
+  var activeRoom = null;
+  for (var ri = 0; ri < rooms.length; ri++) {
+    if (rooms[ri].sketch_id === sketch.id) {
+      activeRoom = rooms[ri];
+      break;
+    }
+  }
+  var isRoomHostOwner = !!(activeRoom && session && activeRoom.host_user_id === session.user.id);
+  var isApprovedForActiveRoom = !!(activeRoom && approvedRoomIds && approvedRoomIds.has(activeRoom.id));
+  var isReturningGuestForActiveRoom = !!(activeRoom && guestRoomIds && guestRoomIds.has(activeRoom.id));
+  var canEnterActiveRoomDirectly = isRoomHostOwner || isApprovedForActiveRoom || isReturningGuestForActiveRoom;
+  var isPendingForActiveRoom = !!(activeRoom && pendingRoomIds && pendingRoomIds.has(activeRoom.id));
 
   var signedUrlState = useState('');
   var signedUrl = signedUrlState[0];
   var setSignedUrl = signedUrlState[1];
+
+  // חדש 20.08.2026 - תמונת נושא: נשלפת מיד עם טעינת הכרטיס (לא בלחיצה, זה תוכן חזותי)
+  var coverImageSignedUrlState = useState('');
+  var coverImageSignedUrl = coverImageSignedUrlState[0];
+  var setCoverImageSignedUrl = coverImageSignedUrlState[1];
 
   var isLoadingAudioState = useState(false);
   var isLoadingAudio = isLoadingAudioState[0];
@@ -194,10 +243,15 @@ export default function SketchCard(props) {
   var isTagModalOpen = isTagModalOpenState[0];
   var setIsTagModalOpen = isTagModalOpenState[1];
 
-  // שלב 5 של תוכנית העיצוב - תפריט תלת-נקודתי (מרכז תיוג/שיתוף/מחיקה)
+  // שלב 5 של תוכנית העיצוב - תפריט תלת-נקודתי (מרכז תיוג/שיתוף/דיווח/מחיקה)
   var isMenuOpenState = useState(false);
   var isMenuOpen = isMenuOpenState[0];
   var setIsMenuOpen = isMenuOpenState[1];
+
+  // חדש 19.08.2026 - מצב טעינה בזמן החלפת נראות פרטי/ציבורי (מופעל עכשיו מאייקון העין, לא מהתפריט)
+  var isTogglingVisibilityState = useState(false);
+  var isTogglingVisibility = isTogglingVisibilityState[0];
+  var setIsTogglingVisibility = isTogglingVisibilityState[1];
 
   // ברגע שה-URL החתום מגיע, אם הייתה בקשת ניגון ממתינה - מנגנות מיד
   useEffect(function () {
@@ -206,6 +260,34 @@ export default function SketchCard(props) {
       audioRef.current.play();
     }
   }, [signedUrl]);
+
+  // חדש 20.08.2026 - שולפת URL חתום לתמונת הנושא, אם קיימת, מיד עם עליית הכרטיס
+  // (לא בלחיצה - זה תוכן חזותי שצריך להופיע ישר, בשונה מהאזנה שנטענת רק לפי דרישה)
+  useEffect(function () {
+    if (!sketch.cover_image_url) {
+      setCoverImageSignedUrl('');
+      return;
+    }
+
+    var cancelled = false;
+
+    supabase.functions
+      .invoke('media-presigned-url', {
+        body: { action: 'download', table: 'Sketch', recordId: sketch.id, field: 'cover' },
+      })
+      .then(function (result) {
+        if (cancelled) return;
+        if (result.error || (result.data && result.data.error)) {
+          console.error('שגיאה בקבלת תמונת נושא:', result.error ? result.error.message : result.data.error);
+          return;
+        }
+        setCoverImageSignedUrl(result.data.downloadUrl);
+      });
+
+    return function () {
+      cancelled = true;
+    };
+  }, [sketch.cover_image_url, sketch.id]);
 
   // סגירת התפריט בלחיצה מחוץ לו
   useEffect(function () {
@@ -308,6 +390,90 @@ export default function SketchCard(props) {
     }
   }
 
+  // עודכן 20.08.2026 - מופעל עכשיו ישירות מאייקון העין (לא דרך התפריט) - מיזוג הסימון והפעולה.
+  // isPrivate === true כרגע -> הופכות לציבורי (newIsPublic=true), ולהפך.
+  // עודכן 20.08.2026 (מאוחר יותר) - אישור מפורש רק בכיוון להפוך לציבורי (החשיפה המשמעותית).
+  // הפיכה חזרה לפרטי נשארת מיידית בלי שאלה - זה הכיוון הבטוח.
+  function handleToggleVisibility(e) {
+    e.stopPropagation();
+    var newIsPublic = isPrivate;
+
+    if (newIsPublic) {
+      var confirmed = window.confirm('להפוך את "' + sketch.title + '" לציבורית? כולם בקהילה יוכלו לראות אותה בפיד.');
+      if (!confirmed) return;
+    }
+
+    setIsTogglingVisibility(true);
+
+    supabase
+      .from('Sketch')
+      .update({ is_public: newIsPublic })
+      .eq('id', sketch.id)
+      .select()
+      .single()
+      .then(function (result) {
+        setIsTogglingVisibility(false);
+        if (result.error) {
+          console.error('שגיאה בעדכון נראות הקטע:', result.error.message);
+          alert('קרתה שגיאה בעדכון הנראות: ' + result.error.message);
+          return;
+        }
+        if (onSketchUpdated) {
+          onSketchUpdated(result.data);
+        }
+      });
+  }
+
+  // חדש 20.08.2026 - דיווח על סקיצה בעייתית. זמין לכולן (כולל על סקיצה של עצמך, כמו RoomReport
+  // הקיים לחדרים) - נשמר בטבלה נפרדת SketchReport לבדיקה ידנית, בלי SELECT policy בכלל.
+  function handleReportClick(e) {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+
+    var reason = window.prompt('דיווח על "' + sketch.title + '" - מה קרה? (הפרטים יישלחו להנהלת הפלטפורמה)');
+    if (!reason) return;
+
+    var reporterDisplayName = session ? session.user.email : 'אורח/ת אנונימית';
+
+    supabase
+      .from('SketchReport')
+      .insert([{
+        sketch_id: sketch.id,
+        sketch_title: sketch.title,
+        uploader_username: sketch.uploader_username,
+        reporter_display_name: reporterDisplayName,
+        reason: reason,
+      }])
+      .then(function (result) {
+        if (result.error) {
+          console.error('שגיאה בשליחת דיווח:', result.error.message);
+          alert('קרתה שגיאה בשליחת הדיווח, נסי שוב.');
+          return;
+        }
+        alert('הדיווח נשלח, תודה.');
+      });
+  }
+
+  // חדש 19.08.2026 - פתיחת CreateRoomModal מוכן מראש לסקיצה הזו (רק ליוצרת, כשאין כבר חדר פעיל)
+  function handleOpenRoomClick(e) {
+    e.stopPropagation();
+    if (onOpenCreateRoomForSketch) {
+      onOpenCreateRoomForSketch(sketch);
+    }
+  }
+
+  // חדש 19.08.2026 - לחיצה על תג "חדר לייב פעיל": כניסה ישירה לבעלים/מאושרות/אורחות חוזרות,
+  // בקשת הצטרפות לכל השאר (זהה בעיקרון ללוגיקה הקיימת ב-RoomList.jsx)
+  function handleActiveRoomClick(e) {
+    e.stopPropagation();
+    if (!activeRoom) return;
+    if (canEnterActiveRoomDirectly) {
+      if (onEnterRoom) onEnterRoom(activeRoom);
+    } else if (!isPendingForActiveRoom) {
+      if (onJoinRoom) onJoinRoom(activeRoom);
+    }
+  }
+
   var displayDate = sketch.created_at ? new Date(sketch.created_at).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' }) : '';
 
   return (
@@ -334,7 +500,7 @@ export default function SketchCard(props) {
         />
       ) : null}
 
-      {/* שורה 1: נקודת סטטוס + תגיות + תפריט תלת-נקודתי */}
+      {/* שורה 1: נקודת סטטוס + תגיות + אייקון נראות + תפריט תלת-נקודתי */}
       <div className="mb-1.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <span className={'w-2 h-2 rounded-full ' + getStatusColor(sketch.status)}></span>
@@ -342,7 +508,26 @@ export default function SketchCard(props) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isPrivate ? (
+          {/* עודכן 20.08.2026 - ליוצרת: אייקון עין קטן ולחיץ, ממזג סימון+פעולה במקום תג טקסט נפרד
+              + פריט תפריט נפרד. למי שלא היוצרת: נשאר תג "🔒 פרטי" טקסטואלי בלבד (מסביר קונטקסט
+              למי שתויגה במפורש לצפייה בקטע פרטי) - בלי גרסה ציבורית מקבילה, זה מיותר למי שלא היוצרת. */}
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={handleToggleVisibility}
+              disabled={isTogglingVisibility}
+              title={isPrivate ? 'פרטי - לחצי כדי להפוך לציבורי' : 'ציבורי - לחצי כדי להפוך לפרטי'}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+            >
+              {isTogglingVisibility ? (
+                <IconLoader className="w-3.5 h-3.5" />
+              ) : isPrivate ? (
+                <IconEyeOff className="w-3.5 h-3.5" />
+              ) : (
+                <IconEye className="w-3.5 h-3.5" />
+              )}
+            </button>
+          ) : isPrivate ? (
             <span
               title="קטע פרטי - נראה רק לך"
               className="text-[10px] font-medium bg-yellow-700/70 text-white px-2 py-0.5 rounded-full"
@@ -350,13 +535,14 @@ export default function SketchCard(props) {
               🔒 פרטי
             </span>
           ) : null}
+
           {sketch.genre ? (
             <span className="text-xs text-foreground/70 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
               {sketch.genre}
             </span>
           ) : null}
 
-          {/* תפריט תלת-נקודתי - מרכז תיוג/שיתוף/מחיקה, במקום כפתורים נפרדים */}
+          {/* תפריט תלת-נקודתי - מרכז תיוג/שיתוף/דיווח/מחיקה */}
           <div className="relative" ref={menuRef}>
             <button
               type="button"
@@ -391,6 +577,14 @@ export default function SketchCard(props) {
                 >
                   שיתוף
                 </button>
+                {/* חדש 20.08.2026 - דיווח, זמין לכולן (כולל על סקיצה של עצמך), כמו RoomReport לחדרים */}
+                <button
+                  type="button"
+                  onClick={handleReportClick}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-right text-[12.5px] text-amber-400 transition-colors hover:bg-amber-500/10"
+                >
+                  דיווח
+                </button>
                 {isOwner ? (
                   <button
                     type="button"
@@ -418,6 +612,15 @@ export default function SketchCard(props) {
               onEnded={handleEnded}
               onTimeUpdate={handleTimeUpdate}
               className="hidden"
+            />
+          ) : null}
+
+          {coverImageSignedUrl ? (
+            <img
+              src={coverImageSignedUrl}
+              alt=""
+              className="h-9 w-9 shrink-0 rounded-md object-cover"
+              style={{ border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
             />
           ) : null}
 
@@ -459,19 +662,56 @@ export default function SketchCard(props) {
           {displayDate ? (
             <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">{displayDate}</span>
           ) : null}
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
-            style={{ background: 'linear-gradient(135deg, rgba(138,111,214,0.25), rgba(138,111,214,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
-          >
-            {sketch.file_type === 'video' ? (
-              <span className="text-base">🎬</span>
-            ) : (
-              <IconFile className="h-4 w-4" style={{ color: 'var(--accent-2-hex, #b48fe8)' }} />
-            )}
-          </div>
+          {coverImageSignedUrl ? (
+            <img
+              src={coverImageSignedUrl}
+              alt=""
+              className="h-9 w-9 shrink-0 rounded-md object-cover"
+              style={{ border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
+            />
+          ) : (
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
+              style={{ background: 'linear-gradient(135deg, rgba(138,111,214,0.25), rgba(138,111,214,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.09))' }}
+            >
+              {sketch.file_type === 'video' ? (
+                <span className="text-base">🎬</span>
+              ) : (
+                <IconFile className="h-4 w-4" style={{ color: 'var(--accent-2-hex, #b48fe8)' }} />
+              )}
+            </div>
+          )}
           <span className="flex-1 truncate text-[12.5px] font-semibold text-foreground">{sketch.title}</span>
         </div>
       )}
+
+      {/* עודכן 20.08.2026 - שורת חדר לייב: פיל קטן (לא w-full), תואם בדיוק לעיצוב הכפתורים
+          הקיימים ב-RoomList.jsx (rounded-full, אותם צבעים וגדלי טקסט). לא נמתח לרוחב הכרטיס. */}
+      {activeRoom ? (
+        <div className="mb-2.5 flex">
+          <button
+            type="button"
+            onClick={handleActiveRoomClick}
+            disabled={isPendingForActiveRoom}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] sm:text-[11px] font-semibold text-white transition-all hover:opacity-90 disabled:opacity-70"
+            style={{ background: 'var(--live-hex, #4fd18b)' }}
+          >
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white animate-live-pulse"></span>
+            {isPendingForActiveRoom ? 'ממתינה...' : (canEnterActiveRoomDirectly ? 'כניסה לחדר' : 'הצטרפות לחדר')}
+          </button>
+        </div>
+      ) : (isOwner ? (
+        <div className="mb-2.5 flex">
+          <button
+            type="button"
+            onClick={handleOpenRoomClick}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] sm:text-[11px] font-semibold text-white transition-all hover:opacity-90"
+            style={{ background: 'var(--live-hex, #4fd18b)' }}
+          >
+            פתח חדר
+          </button>
+        </div>
+      ) : null)}
 
       {/* שורה 4: פוטר - אווטאר+שם+מונה תגובות, לייק/תגובה */}
       <div className="flex items-center justify-between border-t pt-1.5" style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.09))' }}>

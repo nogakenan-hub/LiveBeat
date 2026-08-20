@@ -94,6 +94,113 @@ function uploadMediaToBackblaze(supabase, file) {
     });
 }
 
+// --- תיקון תאימות קבצי WAV (זהה בעיקרון ל-UploadSketchModal.jsx, מוכפל
+// בכוונה - אין קובץ utils משותף בפרויקט כרגע) ---
+// חלק מתוכנות ה-DAW מייצאות WAV בקידודים פנימיים שחלק מהדפדפנים לא יודעים
+// לנגן ישירות (במיוחד Firefox). מפענחות עם Web Audio API וכותבות מחדש
+// כ-WAV קנוני (16-bit PCM) לפני ההעלאה. נכשל בשקט לקובץ המקורי אם צריך.
+
+function isWavFile(file) {
+  var lowerName = file.name.toLowerCase();
+  if (lowerName.indexOf('.wav') !== -1) return true;
+  if (file.type === 'audio/wav' || file.type === 'audio/x-wav') return true;
+  return false;
+}
+
+function writeAsciiString(view, offset, str) {
+  for (var i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function audioBufferToWavBlob(audioBuffer) {
+  var numChannels = audioBuffer.numberOfChannels;
+  var sampleRate = audioBuffer.sampleRate;
+  var bitDepth = 16;
+  var bytesPerSample = bitDepth / 8;
+  var blockAlign = numChannels * bytesPerSample;
+  var numFrames = audioBuffer.length;
+  var dataSize = numFrames * blockAlign;
+
+  var buffer = new ArrayBuffer(44 + dataSize);
+  var view = new DataView(buffer);
+
+  writeAsciiString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAsciiString(view, 8, 'WAVE');
+  writeAsciiString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeAsciiString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  var channelData = [];
+  var ch;
+  for (ch = 0; ch < numChannels; ch++) {
+    channelData.push(audioBuffer.getChannelData(ch));
+  }
+
+  var offset = 44;
+  var frame;
+  for (frame = 0; frame < numFrames; frame++) {
+    for (ch = 0; ch < numChannels; ch++) {
+      var sample = channelData[ch][frame];
+      sample = Math.max(-1, Math.min(1, sample));
+      var intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function reencodeWavFile(file) {
+  return new Promise(function (resolve) {
+    var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      resolve(file);
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      var audioCtx = new AudioContextClass();
+      audioCtx.decodeAudioData(
+        reader.result,
+        function (audioBuffer) {
+          var wavBlob = audioBufferToWavBlob(audioBuffer);
+          var reencodedFile = new File([wavBlob], file.name, { type: 'audio/wav' });
+          audioCtx.close();
+          resolve(reencodedFile);
+        },
+        function (decodeError) {
+          console.error('שגיאה בפענוח WAV לצורך תיקון פורמט - משתמשת בקובץ המקורי:', decodeError);
+          audioCtx.close();
+          resolve(file);
+        }
+      );
+    };
+    reader.onerror = function () {
+      resolve(file);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function formatFileSizeMb(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+function isFileWav(file) {
+  return !!(file && (file.type === 'audio/wav' || file.type === 'audio/x-wav'));
+}
+
 // --- הגנה על קבצים המצורפים לתגובות: אותו עיקרון "טקסט בלבד" שחל על הקטע הראשי ---
 
 function arrayBufferToBase64(buffer) {
@@ -206,10 +313,12 @@ function FeedbackItem(props) {
   var setReplyingToId = props.setReplyingToId;
   var replyText = props.replyText;
   var setReplyText = props.setReplyText;
+  var replyFile = props.replyFile;
   var replyDocName = props.replyDocName;
   var replyDocText = props.replyDocText;
   var setReplyDocText = props.setReplyDocText;
   var isExtractingReply = props.isExtractingReply;
+  var isConvertingReplyWav = props.isConvertingReplyWav;
   var extractionErrorReply = props.extractionErrorReply;
   var onReplyFileSelected = props.onReplyFileSelected;
   var resetReplyAttachment = props.resetReplyAttachment;
@@ -228,6 +337,7 @@ function FeedbackItem(props) {
   var isReplyingHere = replyingToId === fb.id;
   var isEditingHere = editingId === fb.id;
   var isOwnComment = currentUserId && fb.author_user_id === currentUserId;
+  var isReplyFileWav = isFileWav(replyFile);
 
   var wrapperStyle = { marginRight: (depth * 18) + 'px' };
 
@@ -374,6 +484,19 @@ function FeedbackItem(props) {
             onChange={handleReplyFileChange}
             className="text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white file:text-xs"
           />
+          {isConvertingReplyWav ? (
+            <p className="text-[11px] text-gray-500">מתקנת את פורמט קובץ ה-WAV לתאימות מלאה עם דפדפנים...</p>
+          ) : null}
+          {isReplyFileWav && !isConvertingReplyWav && !isSubmitting ? (
+            <p className="text-[11px] text-gray-500">
+              קובץ WAV ({formatFileSizeMb(replyFile.size)}MB) - ההעלאה עשויה לקחת כמה דקות.
+            </p>
+          ) : null}
+          {isReplyFileWav && isSubmitting ? (
+            <p className="text-[11px] text-amber-400">
+              מעלה קובץ WAV ({formatFileSizeMb(replyFile.size)}MB) - זה עשוי לקחת כמה דקות, זה תקין.
+            </p>
+          ) : null}
           {replyDocName ? (
             <div className="flex flex-col gap-1">
               <p className="text-[11px] text-gray-500">
@@ -399,10 +522,10 @@ function FeedbackItem(props) {
           <button
             type="button"
             onClick={handleSendReply}
-            disabled={isSubmitting || isExtractingReply}
+            disabled={isSubmitting || isExtractingReply || isConvertingReplyWav}
             className="bg-green-600 hover:bg-green-700 p-2 rounded-lg font-bold text-xs transition-colors disabled:opacity-50 self-start px-4"
           >
-            {isSubmitting ? 'שולח...' : 'שליחת תגובה'}
+            {isSubmitting ? 'שולח...' : isConvertingReplyWav ? 'מתקנת פורמט...' : 'שליחת תגובה'}
           </button>
         </div>
       ) : null}
@@ -418,10 +541,12 @@ function FeedbackItem(props) {
             setReplyingToId={setReplyingToId}
             replyText={replyText}
             setReplyText={setReplyText}
+            replyFile={replyFile}
             replyDocName={replyDocName}
             replyDocText={replyDocText}
             setReplyDocText={setReplyDocText}
             isExtractingReply={isExtractingReply}
+            isConvertingReplyWav={isConvertingReplyWav}
             extractionErrorReply={extractionErrorReply}
             onReplyFileSelected={onReplyFileSelected}
             resetReplyAttachment={resetReplyAttachment}
@@ -490,6 +615,15 @@ export default function SketchDetailModal(props) {
   var extractionErrorNewState = useState('');
   var extractionErrorNew = extractionErrorNewState[0];
   var setExtractionErrorNew = extractionErrorNewState[1];
+
+  // המרת WAV - דגל נפרד לפידבק הראשי, ודגל נפרד לתגובות (יכולות לקרות בנפרד)
+  var isConvertingNewFeedbackWavState = useState(false);
+  var isConvertingNewFeedbackWav = isConvertingNewFeedbackWavState[0];
+  var setIsConvertingNewFeedbackWav = isConvertingNewFeedbackWavState[1];
+
+  var isConvertingReplyWavState = useState(false);
+  var isConvertingReplyWav = isConvertingReplyWavState[0];
+  var setIsConvertingReplyWav = isConvertingReplyWavState[1];
 
   var replyingToIdState = useState(null);
   var replyingToId = replyingToIdState[0];
@@ -650,6 +784,7 @@ export default function SketchDetailModal(props) {
     setNewFeedbackDocText('');
     setExtractionErrorNew('');
     setIsExtractingNew(false);
+    setIsConvertingNewFeedbackWav(false);
   }
 
   function resetReplyAttachment() {
@@ -658,6 +793,7 @@ export default function SketchDetailModal(props) {
     setReplyDocText('');
     setExtractionErrorReply('');
     setIsExtractingReply(false);
+    setIsConvertingReplyWav(false);
   }
 
   function handleNewFeedbackFileChange(e) {
@@ -684,12 +820,24 @@ export default function SketchDetailModal(props) {
         }
         setNewFeedbackDocText(text);
       });
-    } else {
-      setNewFeedbackFile(selected);
-      setNewFeedbackDocName('');
-      setNewFeedbackDocText('');
-      setExtractionErrorNew('');
+      return;
     }
+
+    setNewFeedbackDocName('');
+    setNewFeedbackDocText('');
+    setExtractionErrorNew('');
+
+    if (kind === 'sound' && isWavFile(selected)) {
+      setNewFeedbackFile(selected);
+      setIsConvertingNewFeedbackWav(true);
+      reencodeWavFile(selected).then(function (finalFile) {
+        setIsConvertingNewFeedbackWav(false);
+        setNewFeedbackFile(finalFile);
+      });
+      return;
+    }
+
+    setNewFeedbackFile(selected);
   }
 
   function handleReplyFileSelected(selected) {
@@ -708,12 +856,24 @@ export default function SketchDetailModal(props) {
         }
         setReplyDocText(text);
       });
-    } else {
-      setReplyFile(selected);
-      setReplyDocName('');
-      setReplyDocText('');
-      setExtractionErrorReply('');
+      return;
     }
+
+    setReplyDocName('');
+    setReplyDocText('');
+    setExtractionErrorReply('');
+
+    if (kind === 'sound' && isWavFile(selected)) {
+      setReplyFile(selected);
+      setIsConvertingReplyWav(true);
+      reencodeWavFile(selected).then(function (finalFile) {
+        setIsConvertingReplyWav(false);
+        setReplyFile(finalFile);
+      });
+      return;
+    }
+
+    setReplyFile(selected);
   }
 
   function maybeAutoAdvanceStatus(feedbackAuthorId) {
@@ -830,10 +990,18 @@ export default function SketchDetailModal(props) {
   }
 
   function handleSubmitTopLevel() {
+    if (isConvertingNewFeedbackWav) {
+      alert('עדיין מתקנת את פורמט הקובץ - רגע בבקשה');
+      return;
+    }
     insertFeedback(newFeedback, null, newFeedbackFile, newFeedbackDocName, newFeedbackDocText);
   }
 
   function handleSubmitReply(parentId) {
+    if (isConvertingReplyWav) {
+      alert('עדיין מתקנת את פורמט הקובץ - רגע בבקשה');
+      return;
+    }
     insertFeedback(replyText, parentId, replyFile, replyDocName, replyDocText);
   }
 
@@ -922,10 +1090,11 @@ export default function SketchDetailModal(props) {
   var currentUserId = session ? session.user.id : null;
   var isSketchOwner = currentUserId && sketch.uploader_user_id === currentUserId;
   var showStatusControls = isSketchOwner;
+  var isNewFeedbackFileWav = isFileWav(newFeedbackFile);
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60] p-4"
       onClick={onClose}
     >
       <div
@@ -1040,10 +1209,12 @@ export default function SketchDetailModal(props) {
                   setReplyingToId={setReplyingToId}
                   replyText={replyText}
                   setReplyText={setReplyText}
+                  replyFile={replyFile}
                   replyDocName={replyDocName}
                   replyDocText={replyDocText}
                   setReplyDocText={setReplyDocText}
                   isExtractingReply={isExtractingReply}
+                  isConvertingReplyWav={isConvertingReplyWav}
                   extractionErrorReply={extractionErrorReply}
                   onReplyFileSelected={handleReplyFileSelected}
                   resetReplyAttachment={resetReplyAttachment}
@@ -1080,6 +1251,19 @@ export default function SketchDetailModal(props) {
                 onChange={handleNewFeedbackFileChange}
                 className="text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white file:text-xs"
               />
+              {isConvertingNewFeedbackWav ? (
+                <p className="text-xs text-gray-500">מתקנת את פורמט קובץ ה-WAV לתאימות מלאה עם דפדפנים...</p>
+              ) : null}
+              {isNewFeedbackFileWav && !isConvertingNewFeedbackWav && !isSubmitting ? (
+                <p className="text-xs text-gray-500">
+                  קובץ WAV ({formatFileSizeMb(newFeedbackFile.size)}MB) - ההעלאה עשויה לקחת כמה דקות.
+                </p>
+              ) : null}
+              {isNewFeedbackFileWav && isSubmitting ? (
+                <p className="text-xs text-amber-400">
+                  מעלה קובץ WAV ({formatFileSizeMb(newFeedbackFile.size)}MB) - זה עשוי לקחת כמה דקות, זה תקין.
+                </p>
+              ) : null}
               {newFeedbackDocName ? (
                 <div className="flex flex-col gap-1">
                   <p className="text-xs text-gray-500">
@@ -1105,10 +1289,10 @@ export default function SketchDetailModal(props) {
               <button
                 type="button"
                 onClick={handleSubmitTopLevel}
-                disabled={isSubmitting || isExtractingNew}
+                disabled={isSubmitting || isExtractingNew || isConvertingNewFeedbackWav}
                 className="bg-green-600 hover:bg-green-700 p-2.5 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
               >
-                {isSubmitting ? 'שולח...' : 'שליחת פידבק'}
+                {isSubmitting ? 'שולח...' : isConvertingNewFeedbackWav ? 'מתקנת פורמט...' : 'שליחת פידבק'}
               </button>
             </div>
           ) : (

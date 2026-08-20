@@ -2,10 +2,12 @@
 //
 // פונקציה זו מחליפה חלקית את מנגנון ה-Signed URLs הקיים של Supabase Storage,
 // עבור קבצי אודיו/וידאו/מסמכים שעברו לאחסון ב-Backblaze B2.
+// עודכן 20.08.2026 - תומכת גם בתמונות נושא (cover images) לסקיצות.
 //
-// שתי פעולות אפשריות ב-body של הבקשה (JSON):
-//   { action: 'upload', fileName: 'original-name.mp3', contentType: 'audio/mpeg' }
-//   { action: 'download', table: 'Sketch' | 'SketchFeedback', recordId: 'uuid-כלשהו' }
+// שלוש צורות אפשריות ב-body של הבקשה (JSON):
+//   { action: 'upload', fileName: 'original-name.mp3', contentType: 'audio/mpeg', declaredSizeBytes: 123 }
+//   { action: 'download', table: 'Sketch' | 'SketchFeedback', recordId: 'uuid-כלשהו' }                       // הקובץ הראשי (ברירת מחדל, field='file')
+//   { action: 'download', table: 'Sketch', recordId: 'uuid-כלשהו', field: 'cover' }                          // חדש - תמונת נושא
 //
 // עקרון אבטחה מרכזי: בפעולת download, אנחנו לעולם לא סומכות על מפתח קובץ
 // שנשלח מהלקוח. במקום זאת, שולפות את הרשומה מה-DB באמצעות client שמחובר
@@ -15,15 +17,18 @@
 // למי שה-RLS מרשה לה.
 //
 // פעולת upload, לעומת זאת, דורשת התחברות תמיד - רק משתמשת מחוברת יכולה
-// להעלות קובץ חדש.
+// להעלות קובץ חדש. היא כללית (לא קשורה ל-table/recordId) - הקריאה מחזירה
+// רק uploadUrl+objectKey, והלקוח בעצמו מחליט לאיזו עמודה לשמור את המפתח
+// (file_url עבור הקובץ הראשי, cover_image_url עבור תמונת נושא).
 
 import { AwsClient } from 'npm:aws4fetch@1.0.20'
 
 // --- הגדרות קבועות, תואמות למה שכבר קיים היום ב-bucket sketch-files של Supabase ---
-var MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50MB
+var MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50MB - סאונד/וידאו/מסמכים
+var MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024 // 5MB - חדש 20.08.2026, תמונות נושא בלבד
 var SIGNED_URL_EXPIRY_SECONDS = 3600 // שעה, בדיוק כמו היום
 
-var ALLOWED_CONTENT_TYPE_PREFIXES = ['audio/', 'video/']
+var ALLOWED_CONTENT_TYPE_PREFIXES = ['audio/', 'video/', 'image/'] // 'image/' נוסף 20.08.2026
 var ALLOWED_EXACT_CONTENT_TYPES = [
   'application/pdf',
   'application/msword',
@@ -51,6 +56,12 @@ function isContentTypeAllowed(contentType) {
     if (contentType.indexOf(ALLOWED_CONTENT_TYPE_PREFIXES[i]) === 0) return true
   }
   return ALLOWED_EXACT_CONTENT_TYPES.indexOf(contentType) !== -1
+}
+
+// חדש 20.08.2026 - תמונות מוגבלות ל-5MB, כל שאר סוגי הקבצים נשארים ב-50MB
+function getMaxSizeForContentType(contentType) {
+  if (contentType && contentType.indexOf('image/') === 0) return MAX_IMAGE_SIZE_BYTES
+  return MAX_FILE_SIZE_BYTES
 }
 
 function getSafeFileExtension(fileName) {
@@ -178,9 +189,12 @@ Deno.serve(async function (req) {
       // אותו סיכון מקובל שכבר קיים היום מול Supabase Storage (ראו STATE.md,
       // "known residual risk"). אכיפה אמיתית של גודל קובץ בפועל ב-PUT דורשת
       // מנגנון נפרד (POST Policy) שלא נבנה כרגע במודע.
-      if (declaredSizeBytes > MAX_FILE_SIZE_BYTES) {
+      // עודכן 20.08.2026 - המגבלה עכשיו תלוית-סוג-קובץ (5MB לתמונות, 50MB לשאר).
+      var maxSizeForThisUpload = getMaxSizeForContentType(contentType)
+      if (declaredSizeBytes > maxSizeForThisUpload) {
+        var sizeLabel = maxSizeForThisUpload === MAX_IMAGE_SIZE_BYTES ? '5MB' : '50MB'
         return new Response(
-          JSON.stringify({ error: 'הקובץ חורג מהגודל המותר (50MB)' }),
+          JSON.stringify({ error: 'הקובץ חורג מהגודל המותר (' + sizeLabel + ')' }),
           {
             status: 400,
             headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' }),
@@ -200,6 +214,8 @@ Deno.serve(async function (req) {
     if (action === 'download') {
       var table = body.table
       var recordId = body.recordId
+      // חדש 20.08.2026 - 'file' (ברירת מחדל, התנהגות קיימת) או 'cover' (תמונת נושא)
+      var field = body.field || 'file'
 
       if (table !== 'Sketch' && table !== 'SketchFeedback') {
         return new Response(
@@ -211,11 +227,23 @@ Deno.serve(async function (req) {
         )
       }
 
+      if (field === 'cover' && table !== 'Sketch') {
+        return new Response(
+          JSON.stringify({ error: 'תמונת נושא נתמכת רק לסקיצות' }),
+          {
+            status: 400,
+            headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' }),
+          }
+        )
+      }
+
       // שאילתה עם client שמכבד RLS לפי מי ששלחה את הבקשה (מחוברת או לא).
       // אם השורה לא חוזרת - RLS לא הרשתה, ואין URL.
+      var selectColumns = field === 'cover' ? 'cover_image_url' : 'file_url, storage_provider'
+
       var recordResult = await scoped.supabase
         .from(table)
-        .select('file_url, storage_provider')
+        .select(selectColumns)
         .eq('id', recordId)
         .maybeSingle()
 
@@ -230,18 +258,34 @@ Deno.serve(async function (req) {
       }
 
       var row = recordResult.data
+      var objectKeyToFetch
 
-      if (row.storage_provider !== 'backblaze' || !row.file_url) {
-        return new Response(
-          JSON.stringify({ error: 'הרשומה הזו לא מאוחסנת ב-Backblaze' }),
-          {
-            status: 400,
-            headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' }),
-          }
-        )
+      if (field === 'cover') {
+        // תמונות נושא הן תמיד B2 - לא קיים מצב 'supabase' עבורן, אין צורך בבדיקת storage_provider
+        if (!row.cover_image_url) {
+          return new Response(
+            JSON.stringify({ error: 'אין תמונת נושא לסקיצה זו' }),
+            {
+              status: 400,
+              headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' }),
+            }
+          )
+        }
+        objectKeyToFetch = row.cover_image_url
+      } else {
+        if (row.storage_provider !== 'backblaze' || !row.file_url) {
+          return new Response(
+            JSON.stringify({ error: 'הרשומה הזו לא מאוחסנת ב-Backblaze' }),
+            {
+              status: 400,
+              headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' }),
+            }
+          )
+        }
+        objectKeyToFetch = row.file_url
       }
 
-      var downloadUrl = await buildPresignedUrl('GET', row.file_url, null)
+      var downloadUrl = await buildPresignedUrl('GET', objectKeyToFetch, null)
 
       return new Response(
         JSON.stringify({ downloadUrl: downloadUrl }),

@@ -2,6 +2,7 @@ import React, { useState, useContext } from 'react';
 import { SupabaseContext } from '../main';
 
 var MAX_FILE_SIZE = 50 * 1024 * 1024;
+var MAX_COVER_IMAGE_SIZE = 5 * 1024 * 1024; // חדש 20.08.2026 - תמונת נושא, מוגבל בנפרד מהקובץ הראשי
 
 function detectFileType(file) {
   if (file.type.indexOf('audio/') === 0) return 'sound';
@@ -27,6 +28,111 @@ function arrayBufferToBase64(buffer) {
   return window.btoa(binary);
 }
 
+// --- תיקון תאימות קבצי WAV ---
+// חלק מתוכנות ה-DAW (Logic, Ableton, Pro Tools וכו') מייצאות WAV בקידודים
+// פנימיים (24-bit, IEEE Float ועוד) שחלק מהדפדפנים לא יודעים לנגן ישירות
+// דרך תג <audio> רגיל (במיוחד Firefox). הפתרון: לפענח את הקובץ המקורי עם
+// Web Audio API (יותר "סלחני" מתג <audio>), ולכתוב אותו מחדש כ-WAV קנוני
+// (16-bit PCM) - הפורמט הכי אוניברסלי שקיים, לפני ההעלאה בכלל.
+// אם הפענוח נכשל מכל סיבה - נופלים בחזרה לקובץ המקורי, לא חוסמים העלאה.
+
+function isWavFile(file) {
+  var lowerName = file.name.toLowerCase();
+  if (lowerName.indexOf('.wav') !== -1) return true;
+  if (file.type === 'audio/wav' || file.type === 'audio/x-wav') return true;
+  return false;
+}
+
+function writeAsciiString(view, offset, str) {
+  for (var i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function audioBufferToWavBlob(audioBuffer) {
+  var numChannels = audioBuffer.numberOfChannels;
+  var sampleRate = audioBuffer.sampleRate;
+  var bitDepth = 16;
+  var bytesPerSample = bitDepth / 8;
+  var blockAlign = numChannels * bytesPerSample;
+  var numFrames = audioBuffer.length;
+  var dataSize = numFrames * blockAlign;
+
+  var buffer = new ArrayBuffer(44 + dataSize);
+  var view = new DataView(buffer);
+
+  writeAsciiString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAsciiString(view, 8, 'WAVE');
+  writeAsciiString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // גודל chunk ה-fmt
+  view.setUint16(20, 1, true); // format = 1 (PCM)
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true); // byte rate
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeAsciiString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  var channelData = [];
+  var ch;
+  for (ch = 0; ch < numChannels; ch++) {
+    channelData.push(audioBuffer.getChannelData(ch));
+  }
+
+  var offset = 44;
+  var frame;
+  for (frame = 0; frame < numFrames; frame++) {
+    for (ch = 0; ch < numChannels; ch++) {
+      var sample = channelData[ch][frame];
+      sample = Math.max(-1, Math.min(1, sample));
+      var intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function reencodeWavFile(file) {
+  return new Promise(function (resolve) {
+    var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      resolve(file);
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      var audioCtx = new AudioContextClass();
+      audioCtx.decodeAudioData(
+        reader.result,
+        function (audioBuffer) {
+          var wavBlob = audioBufferToWavBlob(audioBuffer);
+          var reencodedFile = new File([wavBlob], file.name, { type: 'audio/wav' });
+          audioCtx.close();
+          resolve(reencodedFile);
+        },
+        function (decodeError) {
+          console.error('שגיאה בפענוח WAV לצורך תיקון פורמט - משתמשת בקובץ המקורי:', decodeError);
+          audioCtx.close();
+          resolve(file);
+        }
+      );
+    };
+    reader.onerror = function () {
+      resolve(file);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function formatFileSizeMb(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
 export default function UploadSketchModal(props) {
   var isOpen = props.isOpen;
   var onClose = props.onClose;
@@ -44,13 +150,24 @@ export default function UploadSketchModal(props) {
   var genre = genreState[0];
   var setGenre = genreState[1];
 
-  var isPublicState = useState(true);
+  // עודכן 19.08.2026: ברירת מחדל של נראות עברה מציבורי לפרטי (מודל דומה ל-Suno) -
+  // קהל היעד האמיתי (מורה-תלמיד, מפיק-אמן, חברי להקה) לא צריך גילוי ציבורי כברירת מחדל.
+  var isPublicState = useState(false);
   var isPublic = isPublicState[0];
   var setIsPublic = isPublicState[1];
 
   var fileState = useState(null);
   var file = fileState[0];
   var setFile = fileState[1];
+
+  // חדש 20.08.2026 - תמונת נושא, נפרדת לגמרי מהקובץ הראשי (סאונד/וידאו/טקסט)
+  var coverImageFileState = useState(null);
+  var coverImageFile = coverImageFileState[0];
+  var setCoverImageFile = coverImageFileState[1];
+
+  var coverImagePreviewUrlState = useState('');
+  var coverImagePreviewUrl = coverImagePreviewUrlState[0];
+  var setCoverImagePreviewUrl = coverImagePreviewUrlState[1];
 
   var extractedTextState = useState('');
   var extractedText = extractedTextState[0];
@@ -63,6 +180,10 @@ export default function UploadSketchModal(props) {
   var extractionErrorState = useState('');
   var extractionError = extractionErrorState[0];
   var setExtractionError = extractionErrorState[1];
+
+  var isConvertingWavState = useState(false);
+  var isConvertingWav = isConvertingWavState[0];
+  var setIsConvertingWav = isConvertingWavState[1];
 
   var submittingState = useState(false);
   var isSubmitting = submittingState[0];
@@ -118,11 +239,23 @@ export default function UploadSketchModal(props) {
       return;
     }
 
-    setFile(selected);
     setExtractedText('');
     setExtractionError('');
 
     var type = detectFileType(selected);
+
+    if (type === 'sound' && isWavFile(selected)) {
+      setFile(selected);
+      setIsConvertingWav(true);
+      reencodeWavFile(selected).then(function (finalFile) {
+        setIsConvertingWav(false);
+        setFile(finalFile);
+      });
+      return;
+    }
+
+    setFile(selected);
+
     if (type === 'text') {
       if (selected.type === 'application/pdf') {
         runServerExtraction(selected, 'pdf');
@@ -134,6 +267,79 @@ export default function UploadSketchModal(props) {
     }
   }
 
+  // חדש 20.08.2026 - בחירת תמונת נושא: ולידציה מקומית (סוג+גודל) + תצוגה מקדימה
+  // מקומית מיידית עם URL.createObjectURL (לא מעלה כלום עדיין - זה קורה רק בשליחה בפועל)
+  function handleCoverImageChange(e) {
+    var selected = e.target.files[0];
+    if (!selected) return;
+
+    if (selected.type.indexOf('image/') !== 0) {
+      alert('תמונת הנושא חייבת להיות קובץ תמונה.');
+      e.target.value = '';
+      return;
+    }
+
+    if (selected.size > MAX_COVER_IMAGE_SIZE) {
+      alert('תמונת הנושא גדולה מדי - המגבלה היא 5MB.');
+      e.target.value = '';
+      return;
+    }
+
+    if (coverImagePreviewUrl) {
+      URL.revokeObjectURL(coverImagePreviewUrl);
+    }
+
+    setCoverImageFile(selected);
+    setCoverImagePreviewUrl(URL.createObjectURL(selected));
+  }
+
+  function handleRemoveCoverImage() {
+    if (coverImagePreviewUrl) {
+      URL.revokeObjectURL(coverImagePreviewUrl);
+    }
+    setCoverImageFile(null);
+    setCoverImagePreviewUrl('');
+  }
+
+  // חדש 20.08.2026 - מעלה את תמונת הנושא (אם נבחרה) ל-B2 באותו נתיב Presigned URL
+  // כמו הקובץ הראשי, ומחזירה Promise שמתממש ל-objectKey (או null אם אין תמונה בכלל).
+  // מופעלת תמיד לפני שמירת השורה ב-Sketch, גם בזרימת טקסט וגם בזרימת מדיה.
+  function uploadCoverImageIfNeeded() {
+    if (!coverImageFile) {
+      return Promise.resolve(null);
+    }
+
+    return supabase.functions
+      .invoke('media-presigned-url', {
+        body: {
+          action: 'upload',
+          fileName: coverImageFile.name,
+          contentType: coverImageFile.type,
+          declaredSizeBytes: coverImageFile.size,
+        },
+      })
+      .then(function (presignResult) {
+        if (presignResult.error || (presignResult.data && presignResult.data.error)) {
+          var presignMessage = presignResult.error ? presignResult.error.message : presignResult.data.error;
+          throw new Error('תמונת נושא: ' + presignMessage);
+        }
+
+        var uploadUrl = presignResult.data.uploadUrl;
+        var objectKey = presignResult.data.objectKey;
+
+        return fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': coverImageFile.type },
+          body: coverImageFile,
+        }).then(function (putResponse) {
+          if (!putResponse.ok) {
+            throw new Error('העלאת תמונת הנושא נכשלה (סטטוס ' + putResponse.status + ')');
+          }
+          return objectKey;
+        });
+      });
+  }
+
   // --- זרימת ההעלאה החדשה: קבצי מדיה (סאונד/וידאו) עוברים ל-Backblaze B2 ---
   // שלב 1: מבקשות מה-Edge Function URL חתום להעלאה ישירה (הפונקציה גם
   //         מייצרת שם קובץ בטוח בצד השרת - אין יותר buildSafeFilePath כאן).
@@ -141,14 +347,20 @@ export default function UploadSketchModal(props) {
   // שלב 3: שומרות שורת Sketch עם storage_provider='backblaze' ועם מפתח
   //        הקובץ (objectKey) שחזר מה-Edge Function.
   function performMediaUpload(fileType) {
-    supabase.functions
-      .invoke('media-presigned-url', {
-        body: {
-          action: 'upload',
-          fileName: file.name,
-          contentType: file.type,
-          declaredSizeBytes: file.size,
-        },
+    var coverImageObjectKey = null;
+
+    uploadCoverImageIfNeeded()
+      .then(function (resolvedCoverKey) {
+        coverImageObjectKey = resolvedCoverKey;
+
+        return supabase.functions.invoke('media-presigned-url', {
+          body: {
+            action: 'upload',
+            fileName: file.name,
+            contentType: file.type,
+            declaredSizeBytes: file.size,
+          },
+        });
       })
       .then(function (presignResult) {
         if (presignResult.error || (presignResult.data && presignResult.data.error)) {
@@ -181,6 +393,7 @@ export default function UploadSketchModal(props) {
           uploader_user_id: session.user.id,
           is_public: isPublic,
           storage_provider: 'backblaze',
+          cover_image_url: coverImageObjectKey,
         };
 
         return supabase
@@ -224,6 +437,10 @@ export default function UploadSketchModal(props) {
       alert('חסר שם תצוגה בפרופיל');
       return;
     }
+    if (isConvertingWav) {
+      alert('עדיין מתקנת את פורמט הקובץ - רגע בבקשה');
+      return;
+    }
 
     var fileType = detectFileType(file);
 
@@ -235,23 +452,27 @@ export default function UploadSketchModal(props) {
     setIsSubmitting(true);
 
     if (fileType === 'text') {
-      var textRow = {
-        title: title,
-        file_url: null,
-        file_type: 'text',
-        genre: genre,
-        status: 'דרוש פידבק',
-        uploader_username: profile.display_name,
-        uploader_user_id: session.user.id,
-        extracted_text: extractedText,
-        is_public: isPublic,
-      };
+      uploadCoverImageIfNeeded()
+        .then(function (coverImageObjectKey) {
+          var textRow = {
+            title: title,
+            file_url: null,
+            file_type: 'text',
+            genre: genre,
+            status: 'דרוש פידבק',
+            uploader_username: profile.display_name,
+            uploader_user_id: session.user.id,
+            extracted_text: extractedText,
+            is_public: isPublic,
+            cover_image_url: coverImageObjectKey,
+          };
 
-      supabase
-        .from('Sketch')
-        .insert([textRow])
-        .select()
-        .single()
+          return supabase
+            .from('Sketch')
+            .insert([textRow])
+            .select()
+            .single();
+        })
         .then(function (insertResult) {
           setIsSubmitting(false);
           if (insertResult.error) {
@@ -264,6 +485,11 @@ export default function UploadSketchModal(props) {
           }
           resetForm();
           onClose();
+        })
+        .catch(function (error) {
+          setIsSubmitting(false);
+          console.error('שגיאה בשמירת הקטע:', error.message);
+          alert('קרתה שגיאה בשמירת הקטע: ' + error.message);
         });
       return;
     }
@@ -274,14 +500,21 @@ export default function UploadSketchModal(props) {
   function resetForm() {
     setTitle('');
     setGenre('');
-    setIsPublic(true);
+    setIsPublic(false);
     setFile(null);
     setExtractedText('');
     setExtractionError('');
+    setIsConvertingWav(false);
+    if (coverImagePreviewUrl) {
+      URL.revokeObjectURL(coverImagePreviewUrl);
+    }
+    setCoverImageFile(null);
+    setCoverImagePreviewUrl('');
   }
 
   var currentFileType = file ? detectFileType(file) : null;
   var showTextArea = currentFileType === 'text';
+  var isCurrentFileWav = !!(file && (file.type === 'audio/wav' || file.type === 'audio/x-wav'));
 
   function visibilityButtonClass(active) {
     if (active) {
@@ -337,6 +570,47 @@ export default function UploadSketchModal(props) {
           className="w-full bg-gray-800 border border-gray-700 p-3 mb-3 rounded-lg text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-green-600 file:text-white"
         />
 
+        <label className="block text-sm text-gray-400 mb-1">תמונת נושא (אופציונלי, עד 5MB)</label>
+        {coverImagePreviewUrl ? (
+          <div className="flex items-center gap-3 mb-4">
+            <img
+              src={coverImagePreviewUrl}
+              alt="תצוגה מקדימה של תמונת הנושא"
+              className="w-16 h-16 rounded-lg object-cover border border-gray-700"
+            />
+            <button
+              type="button"
+              onClick={handleRemoveCoverImage}
+              className="text-xs text-red-400 hover:text-red-300"
+            >
+              הסרת תמונה
+            </button>
+          </div>
+        ) : (
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleCoverImageChange}
+            className="w-full bg-gray-800 border border-gray-700 p-3 mb-4 rounded-lg text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white"
+          />
+        )}
+
+        {isConvertingWav ? (
+          <p className="text-xs text-gray-500 mb-3">מתקנת את פורמט קובץ ה-WAV לתאימות מלאה עם דפדפנים...</p>
+        ) : null}
+
+        {isCurrentFileWav && !isConvertingWav && !isSubmitting ? (
+          <p className="text-xs text-gray-500 mb-3">
+            קובץ WAV ({formatFileSizeMb(file.size)}MB) - קבצים כאלה גדולים משמעותית מ-MP3, ולכן ההעלאה עשויה לקחת כמה דקות בהתאם למהירות האינטרנט שלך.
+          </p>
+        ) : null}
+
+        {isCurrentFileWav && isSubmitting ? (
+          <p className="text-xs text-amber-400 mb-3">
+            מעלה קובץ WAV ({formatFileSizeMb(file.size)}MB) - זה עשוי לקחת כמה דקות, זה תקין ולא תקוע. נא לא לסגור את החלון.
+          </p>
+        ) : null}
+
         {currentFileType === 'text' ? (
           <p className="text-xs text-gray-500 mb-3">
             קבצי PDF/Word/טקסט: שומרים רק את הטקסט שחולץ - הקובץ המקורי לא נשמר באתר, מטעמי בטיחות.
@@ -374,10 +648,10 @@ export default function UploadSketchModal(props) {
           <button
             type="button"
             onClick={handleUpload}
-            disabled={isSubmitting || isExtracting}
+            disabled={isSubmitting || isExtracting || isConvertingWav}
             className="flex-1 bg-green-600 hover:bg-green-700 p-3 rounded-lg font-bold transition-colors disabled:opacity-50"
           >
-            {isSubmitting ? 'מעלה...' : 'העלאה'}
+            {isSubmitting ? 'מעלה...' : isConvertingWav ? 'מתקנת פורמט...' : 'העלאה'}
           </button>
         </div>
       </div>

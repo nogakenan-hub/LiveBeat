@@ -32,6 +32,9 @@ function RootComponent() {
   const [authChecked, setAuthChecked] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // כשחדר נפתח מתוך כרטיס סקיצה ספציפי (לא מכפתור "פתיחת חדר" הכללי) - שומרות כאן
+  // את הסקיצה עצמה, כדי להעביר sketchId/sketchTitle ל-CreateRoomModal. null = חדר "עצמאי" רגיל.
+  const [createRoomSketch, setCreateRoomSketch] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   // סיבת הפתיחה של מסך ההתחברות - מוצגת כהודעת הקשר בתוך AuthModal.
   // null = פתיחה "רגילה" (למשל מכפתור "התחברות" בתפריט), בלי הודעה נוספת.
@@ -256,6 +259,9 @@ function RootComponent() {
   // בלי זה, חדר חדש שנוצר ע"י משתמשת אחרת לא מופיע עד לרענון ידני.
   // מטפל ב-INSERT/UPDATE/DELETE ומעדכן את ה-state המקומי ישירות,
   // בלי לקרוא ל-fetchRooms מחדש בכל שינוי (חוסך שאילתה מיותרת).
+  // הערה חשובה: אותו מנגנון בדיוק אחראי גם על היעלמות אוטומטית של תג "חדר לייב פעיל"
+  // בכרטיסי הסקיצה (SketchCard.jsx) כשהחדר נמחק - כי DELETE כאן מסנן אותו מה-state
+  // של rooms, ו-SketchCard מחשב "יש חדר פעיל?" ישירות מתוך אותו state.
   useEffect(function () {
     const channel = supabase
       .channel('live-room-changes')
@@ -354,11 +360,15 @@ function RootComponent() {
     if (!profile) return;
 
     if (pendingAction === 'create') {
+      setCreateRoomSketch(null);
       setIsModalOpen(true);
     } else if (pendingAction === 'upload') {
       setIsUploadModalOpen(true);
     } else if (pendingAction.type === 'join') {
       setJoinRequestRoom(pendingAction.room);
+    } else if (pendingAction.type === 'createForSketch') {
+      setCreateRoomSketch(pendingAction.sketch);
+      setIsModalOpen(true);
     }
     setPendingAction(null);
     setIsAuthModalOpen(false);
@@ -397,8 +407,8 @@ function RootComponent() {
       });
   }
 
-  // עודכן: מיזוג במקום החלפה מלאה. עדכון סטטוס (מ-SketchDetailModal) מחזיר
-  // רק את עמודות טבלת Sketch עצמה - אין בו comment_count (זה לא עמודה אמיתית).
+  // עודכן: מיזוג במקום החלפה מלאה. עדכון סטטוס/נראות (מ-SketchDetailModal או מ-SketchCard)
+  // מחזיר רק את עמודות טבלת Sketch עצמה - אין בו comment_count (זה לא עמודה אמיתית).
   // Object.assign שומר על comment_count הקיים כש-updatedSketch לא כולל אותו בכלל.
   function handleUpdateSketch(updatedSketch) {
     setSketches(function (prev) {
@@ -452,6 +462,8 @@ function RootComponent() {
   }
 
   function handleOpenCreateModal() {
+    setCreateRoomSketch(null);
+
     if (!session) {
       setPendingAction('create');
       setAuthModalReason(null);
@@ -459,6 +471,21 @@ function RootComponent() {
     } else if (!profile) {
       setPendingAction('create');
     } else {
+      setIsModalOpen(true);
+    }
+  }
+
+  // חדש: פתיחת חדר לייב מתוך כרטיס סקיצה ספציפי - זהה בעיקרון ל-handleOpenCreateModal,
+  // רק ששומרת את הסקיצה עצמה כדי להעביר sketch_id ל-CreateRoomModal.
+  function handleOpenCreateModalForSketch(sketch) {
+    if (!session) {
+      setPendingAction({ type: 'createForSketch', sketch: sketch });
+      setAuthModalReason(null);
+      setIsAuthModalOpen(true);
+    } else if (!profile) {
+      setPendingAction({ type: 'createForSketch', sketch: sketch });
+    } else {
+      setCreateRoomSketch(sketch);
       setIsModalOpen(true);
     }
   }
@@ -676,6 +703,7 @@ function RootComponent() {
             rooms={rooms}
             sketches={sketches}
             onOpenCreateModal={handleOpenCreateModal}
+            onOpenCreateRoomForSketch={handleOpenCreateModalForSketch}
             onDeleteRoom={handleDeleteRoom}
             onRequestJoin={handleRequestJoin}
             onEnterRoom={handleEnterRoom}
@@ -699,10 +727,12 @@ function RootComponent() {
           />
           <CreateRoomModal
             isOpen={isModalOpen}
-            onClose={function () { setIsModalOpen(false); }}
+            onClose={function () { setIsModalOpen(false); setCreateRoomSketch(null); }}
             onRoomCreated={handleRoomCreated}
             profile={profile}
             session={session}
+            sketchId={createRoomSketch ? createRoomSketch.id : null}
+            sketchTitle={createRoomSketch ? createRoomSketch.title : ''}
           />
           <UploadSketchModal
             isOpen={isUploadModalOpen}

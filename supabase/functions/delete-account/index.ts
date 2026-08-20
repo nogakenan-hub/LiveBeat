@@ -1,3 +1,7 @@
+// supabase/functions/delete-account/index.ts
+
+import { AwsClient } from 'npm:aws4fetch@1.0.20'
+
 // תבנית מותרת: כל כתובת קודספייס (משתנה לפי פורט) + אפשרות להוסיף כאן בעתיד דומיין ייצור קבוע
 var ALLOWED_ORIGIN_PATTERN = /^https:\/\/[a-z0-9-]+\.app\.github\.dev$/
 
@@ -9,6 +13,62 @@ function getCorsHeaders(req) {
     'Access-Control-Allow-Origin': isAllowed ? origin : 'null',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Vary': 'Origin',
+  }
+}
+
+// ה-B2_ENDPOINT נראה כך: s3.eu-central-003.backblazeb2.com
+// ה-region הנדרש לחתימה הוא המקטע האמצעי: eu-central-003
+function extractRegionFromEndpoint(endpoint) {
+  var parts = endpoint.split('.')
+  if (parts.length < 2) return 'auto'
+  return parts[1]
+}
+
+// --- מחיקת קבצים מ-Backblaze B2 ---
+// בדיוק כמו ב-media-presigned-url: Presigned URL (signQuery), בלי headers
+// נוספים בחתימה - לקח מהניסיון בסקריפט המיגרציה, ש-headers בחתימה עלולים
+// לגרום ל-SignatureDoesNotMatch כתלות בסביבת ההרצה.
+async function deleteFromB2(fileNames) {
+  var accessKeyId = Deno.env.get('B2_KEY_ID')
+  var secretAccessKey = Deno.env.get('B2_APPLICATION_KEY')
+  var bucketName = Deno.env.get('B2_BUCKET_NAME')
+  var endpoint = Deno.env.get('B2_ENDPOINT')
+
+  if (!accessKeyId || !secretAccessKey || !bucketName || !endpoint) {
+    console.error('חסרים משתני סביבה של Backblaze B2 - מדלגה על מחיקת קבצי B2')
+    return
+  }
+
+  var region = extractRegionFromEndpoint(endpoint)
+  var client = new AwsClient({
+    accessKeyId: accessKeyId,
+    secretAccessKey: secretAccessKey,
+    service: 's3',
+    region: region,
+  })
+
+  for (var i = 0; i < fileNames.length; i++) {
+    var fileName = fileNames[i]
+    try {
+      var url = new URL('https://' + endpoint + '/' + bucketName + '/' + fileName)
+      url.searchParams.set('X-Amz-Expires', '3600')
+
+      var signedRequest = await client.sign(url.toString(), {
+        method: 'DELETE',
+        aws: { signQuery: true },
+      })
+
+      var response = await fetch(signedRequest.url, { method: 'DELETE' })
+
+      if (!response.ok && response.status !== 404) {
+        var errorText = await response.text()
+        console.error('מחיקה מ-B2 נכשלה עבור ' + fileName + ' (סטטוס ' + response.status + '): ' + errorText)
+        // ממשיכה בכל זאת - אותו עיקרון כמו מחיקת Supabase: עדיף חשבון מחוק
+        // עם קובץ יתום מאשר לתקוע את כל התהליך
+      }
+    } catch (error) {
+      console.error('מחיקה מ-B2 נכשלה עבור ' + fileName + ': ' + error.message)
+    }
   }
 }
 
@@ -56,38 +116,51 @@ Deno.serve(async function (req) {
     // לקוח עם הרשאת מנהל - לביצוע המחיקה בפועל (קבצים, נתונים, auth.users)
     var supabaseAdmin = createClient(supabaseUrl, serviceRoleKey)
 
-    // --- שלב 1: איסוף נתיבי הקבצים שצריך למחוק מה-Storage ---
+    // --- שלב 1: איסוף נתיבי הקבצים שצריך למחוק, מפוצל לפי ספק האחסון ---
     // רק סקיצות בבעלות המשתמש + כל הפידבק שתחתן (כי הן יורדות לגמרי בשלב הבא)
     var ownSketchesResult = await supabaseAdmin
       .from('Sketch')
-      .select('id, file_url')
+      .select('id, file_url, storage_provider')
       .eq('uploader_user_id', targetUid)
 
     var ownSketches = ownSketchesResult.data || []
     var sketchIds = ownSketches.map(function (s) { return s.id })
-    var filePaths = ownSketches
-      .map(function (s) { return s.file_url })
-      .filter(function (p) { return !!p })
+
+    var supabasePaths = []
+    var backblazeFileNames = []
+
+    function sortFileByProvider(row) {
+      if (!row.file_url) return
+      if (row.storage_provider === 'backblaze') {
+        backblazeFileNames.push(row.file_url)
+      } else {
+        supabasePaths.push(row.file_url)
+      }
+    }
+
+    ownSketches.forEach(sortFileByProvider)
 
     if (sketchIds.length > 0) {
       var feedbackFilesResult = await supabaseAdmin
         .from('SketchFeedback')
-        .select('file_url')
+        .select('file_url, storage_provider')
         .in('sketch_id', sketchIds)
 
       var feedbackFiles = feedbackFilesResult.data || []
-      feedbackFiles.forEach(function (f) {
-        if (f.file_url) filePaths.push(f.file_url)
-      })
+      feedbackFiles.forEach(sortFileByProvider)
     }
 
-    // --- שלב 2: מחיקת הקבצים בפועל מה-Storage ---
-    if (filePaths.length > 0) {
-      var storageRemoveResult = await supabaseAdmin.storage.from('sketch-files').remove(filePaths)
+    // --- שלב 2: מחיקת הקבצים בפועל, כל אחד מהמקום שלו ---
+    if (supabasePaths.length > 0) {
+      var storageRemoveResult = await supabaseAdmin.storage.from('sketch-files').remove(supabasePaths)
       if (storageRemoveResult.error) {
         console.error('storage remove error:', storageRemoveResult.error.message)
         // ממשיכה בכל זאת - עדיף חשבון מחוק עם קובץ יתום מאשר לתקוע את כל התהליך
       }
+    }
+
+    if (backblazeFileNames.length > 0) {
+      await deleteFromB2(backblazeFileNames)
     }
 
     // --- שלב 3: מחיקה/אנונימיזציה של כל השורות בבסיס הנתונים ---
